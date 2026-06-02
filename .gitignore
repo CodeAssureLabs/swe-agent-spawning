@@ -1,0 +1,31 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+.uv-cache/
+.env
+
+# Agent runtime state
+src/agent/.memory/
+*.tokenlog.jsonl
+
+# Eval checkouts and generated reports
+evals/repos/
+evals/logs/
+evals/*_report*.json
+evals/agents*.json
+evals/no_agents*.json
+evals/no_subagents*.json
+evals/codex*.json
+evals/swebench_style_extended/artifacts/
+evals/swebench_style_extended/audit/
+evals/results/*.csv
+
+# Generated document artifacts
+*.aux
+*.log
+*.out
+*.pdf
+*.zip
+*.tar.gz

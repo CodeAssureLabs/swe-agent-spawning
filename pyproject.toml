@@ -1,0 +1,24 @@
+[project]
+name = "swe-agent-spawning"
+version = "0.1.0"
+description = "Agent-spawning codebase maintenance prototype and file-localization evals"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.94.0",
+    "langgraph>=1.0.7",
+    "langchain>=0.3.0",
+    "langchain-core>=0.3.0",
+    "langchain-anthropic>=0.2.0",
+    "langchain-openai>=0.3.0",
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python>=0.23.0",
+    "tree-sitter-javascript>=0.23.0",
+    "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "rich>=14.3.2",
+    "rlms>=0.1.1",
+]

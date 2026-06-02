@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["files", "rationale"],
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Repository-relative file paths that need to be modified."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Brief reason for the selected files."
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "problem_statement": {
+      "type": "string",
+      "minLength": 200
+    },
+    "requirements": {
+      "type": "string",
+      "minLength": 80
+    },
+    "interface": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "source_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "maxItems": 10
+    }
+  },
+  "required": [
+    "problem_statement",
+    "requirements",
+    "interface",
+    "confidence",
+    "source_notes"
+  ]
+}

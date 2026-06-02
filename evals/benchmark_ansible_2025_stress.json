@@ -1,0 +1,282 @@
+{
+  "repo": "ansible/ansible",
+  "fixed_commit": "b3d21e3ad21a9ea731b5137a6a0e15c033c3a7d9",
+  "window": "Apr 2025 - Sep 2025",
+  "total_instances": 19,
+  "hard_instances": 14,
+  "instances": [
+    {
+      "instance_id": "instance_ansible__ansible-352d8ec33a2e80c1cb58a3ae5e6e949dfd2a51f9-v9ddfe9db390e52767f66a38b37f940818fef0d48",
+      "date": "2025-04-14",
+      "base_commit": "9ddfe9db390e52767f66a38b37f940818fef0d48",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/cli/doc.py"
+      ],
+      "problem_statement": "# ansible-doc: fix indent and line wrapping for first line of (sub-)option and (sub-)return value descriptions\n\n## Summary\n\nansible-doc uses a wrong indent for the first line of description of sub-options and sub-return values, and also does not wrap the first line of all option and return value descriptions correctly (as it only wraps the remainder of the first line, and wrapping doesn't know about the beginning).\n\nRef: https://github.com/ansible-collections/community.general/pull/9651#issuecomment-2632451897\n\nExample: `ansible-doc -t inventory ansible.builtin.constructed`\n\nBefore:\n```\n           trailing_separator          Set this option to `false' to omit the `keyed_groups[].separator' after the h>\n                               variable when the value is an empty string.\n                               This option is mutually exclusive with\n                               `keyed_groups[].default_value'.\n```\nYou can see that the first line is indented much more than the others, and that the line overflows - you need to scroll to the right to see everything.\n\nAfter:\n```\n           trailing_separator  Set this option to `false' to omit the\n                               `keyed_groups[].separator' after the host variable when the\n                               value is an empty string.\n                               This option is mutually exclusive with\n                               `keyed_groups[].default_value'.\n```\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-2a4b1c8248d7bf4cc81ecb2659282544841626b1-v7d0886457ac7d84219583115f131f67d95eb9987",
+      "date": "2025-04-01",
+      "base_commit": "7d0886457ac7d84219583115f131f67d95eb9987",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/cli/config.py",
+        "lib/ansible/config/manager.py"
+      ],
+      "problem_statement": "# ansible-config: Dump galaxy server config in proper JSON format\n\n## Summary\n\nFixes: #84840\n\nSigned-off-by: Abhijeet Kasurde <Akasurde@redhat.com>\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #84840: Bad formats in ansible-config output",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-244c2f06edd3331495de27ecce2066cfa49d1e00-vfcdf0b80b3112ae01cc7687c1b3f29fbcceb42dd",
+      "date": "2025-04-10",
+      "base_commit": "fcdf0b80b3112ae01cc7687c1b3f29fbcceb42dd",
+      "num_files": 7,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/cli/__init__.py",
+        "lib/ansible/cli/adhoc.py",
+        "lib/ansible/cli/console.py",
+        "lib/ansible/cli/playbook.py",
+        "lib/ansible/config/base.yml",
+        "lib/ansible/plugins/connection/ssh.py",
+        "lib/ansible/utils/_ssh_agent.py"
+      ],
+      "problem_statement": "# Add ssh-agent launching, and ssh-agent python client\n\n## Summary\n\n##### ISSUE TYPE\n\n- Feature Pull Request\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-4fe960653068895c7bbfab1ccf3a9c38ecbac1e5-vd33bedc48fdd933b5abd65a77c081876298e2f07",
+      "date": "2025-05-08",
+      "base_commit": "d33bedc48fdd933b5abd65a77c081876298e2f07",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/plugins/action/template.py"
+      ],
+      "problem_statement": "# template module - render `None` as empty string\n\n## Summary\n\nResolves https://github.com/ansible/ansible/issues/85116\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85116: Template with no output results in a file with string 'None'",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-9a426fe3030d7777c3291f2853dcd2d1e51cae75-vfc8a22764724c3b06cb8ecf05b0202af523023df",
+      "date": "2025-05-10",
+      "base_commit": "fc8a22764724c3b06cb8ecf05b0202af523023df",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/config/manager.py",
+        "lib/ansible/utils/collection_loader/__init__.py"
+      ],
+      "problem_statement": "# fix ensure_type to support vaulted values\n\n## Summary\n\n* restored parity with 2.18\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-91453e30afb2bef252049e73d853be06e7af8598-ve2a5377b9a9f3709a312fdb91732555779f6c000",
+      "date": "2025-05-30",
+      "base_commit": "e2a5377b9a9f3709a312fdb91732555779f6c000",
+      "num_files": 3,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_templating/_jinja_bits.py",
+        "lib/ansible/_internal/_templating/_jinja_common.py",
+        "lib/ansible/config/base.yml"
+      ],
+      "problem_statement": "# Added _TEMPLAR_SANDBOX_MODE config\n\n## Summary\n\n* allows unsafe attribute checks to be temporarily disabled in Jinja sandbox by setting `_ANSIBLE_TEMPLAR_SANDBOX_MODE=allow_unsafe_attributes` envvar\n\nfixes #85202\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #85202: Template calls to collection mutation methods are disallowed in 2.19+",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-532edf4c357257b68b828a620c6a890fef53c450-v4956619ac222b491058121e100ea7cbff476ac72",
+      "date": "2025-06-10",
+      "base_commit": "4956619ac222b491058121e100ea7cbff476ac72",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/playbook/taggable.py"
+      ],
+      "problem_statement": "# Fix templating tags on plays and roles\n\n## Summary\n\nFollow up https://github.com/ansible/ansible/pull/81624\n\nFixes #69903\n\nci_complete\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #69903: Using a variable list for tags parameter results in an unhashable type: 'list' exception",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-1c06c46cc14324df35ac4f39a45fb3ccd602195d-v6198c7377f545207218fe8eb2e3cfa9673ff8f5e",
+      "date": "2025-06-05",
+      "base_commit": "6198c7377f545207218fe8eb2e3cfa9673ff8f5e",
+      "num_files": 4,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_yaml/_constructor.py",
+        "lib/ansible/_internal/_yaml/_dumper.py",
+        "lib/ansible/module_utils/_internal/__init__.py",
+        "lib/ansible/plugins/filter/core.py"
+      ],
+      "problem_statement": "# Fix YAML loading/dumping and filters\n\n## Summary\n\n- from_yaml/from_yaml_all filters now preserve trust\n- YAML dumping can once again handle undecryptable vaulted values\n- increased test coverage\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-46abcfcc824c199ad17ba5e3a9ceaf161107aa67-v8e9f5fb9d5a061ba3238a22812e2e9e45cd3fab6",
+      "date": "2025-06-17",
+      "base_commit": "8e9f5fb9d5a061ba3238a22812e2e9e45cd3fab6",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/config/base.yml",
+        "lib/ansible/executor/module_common.py"
+      ],
+      "problem_statement": "# feature-flag experimental module metadata\n\n## Summary\n\n* added ansible-test integration env/set directive for aliases\n* applied to module-serialization-profiles test to enable feature flag\n\n## Issue Type\n\nFeature Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-11f5563895b3549d266435d7b15624fb633bb83b-ve7c7df7074a664175e96f17288aba1d3c190009b",
+      "date": "2025-06-25",
+      "base_commit": "e7c7df7074a664175e96f17288aba1d3c190009b",
+      "num_files": 5,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_json/__init__.py",
+        "lib/ansible/_internal/_templating/_jinja_bits.py",
+        "lib/ansible/_internal/_templating/_utils.py",
+        "lib/ansible/cli/console.py",
+        "lib/ansible/executor/module_common.py"
+      ],
+      "problem_statement": "# Jinja sandbox refinement\n\n## Summary\n\n* Restore ability to direct-call int bitwise operators and collection mutation methods from Jinja expressions.\n* Misc small fixes\n\nfixes #85204\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85204: Unsafe attribute access in templates",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-649c9ec4431feca274e4d14d7a1bc835d70c10b9-vdb819d2514d053235746eef7d28fa841e3f5c053",
+      "date": "2025-06-26",
+      "base_commit": "db819d2514d053235746eef7d28fa841e3f5c053",
+      "num_files": 4,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_json/__init__.py",
+        "lib/ansible/_internal/_templating/_utils.py",
+        "lib/ansible/module_utils/_internal/_datatag/__init__.py",
+        "lib/ansible/utils/vars.py"
+      ],
+      "problem_statement": "# Encryptedstring redact fixes\n\n## Summary\n\nFixed redaction behavior for EncryptedString, added related tests for both transform_to_native_types and AnsibleVariableVisitor.\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-38823665858c57ffd1fbc08c6acbead20d339c51-veb5e57a8f08479c623729e3c17cc5ce7b88dd43c",
+      "date": "2025-07-18",
+      "base_commit": "eb5e57a8f08479c623729e3c17cc5ce7b88dd43c",
+      "num_files": 4,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_ansiballz/_builder.py",
+        "lib/ansible/config/base.yml",
+        "lib/ansible/module_utils/_internal/_ansiballz/_extensions/_debugpy.py",
+        "lib/ansible/module_utils/_internal/_ansiballz/_extensions/_pydevd.py"
+      ],
+      "problem_statement": "# Add AnsiballZ debugging support with debugpy\n\n## Summary\n\nAdds support for debugging AnsiballZ modules with debugpy which is used by VSCode as its Python debugger DAP. Debugging can either be done through a manual Debugpy listening server through a launch.json configuration or through the new ansible-test --dev-debug-on-deman argument.\n\nThe `ansible-test` integration requires a change in debugpy that is not currently in a public release. It can be used by cloning the debugpy repo or waiting until the next release.\n\n## Issue Type\n\nFeature Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-f2612fbe3ae3c9d5aafab612ee3f04dc2eb24378-v8aad1418f6069d90de963d5187204419f62ad893",
+      "date": "2025-07-30",
+      "base_commit": "8aad1418f6069d90de963d5187204419f62ad893",
+      "num_files": 7,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/__init__.py",
+        "lib/ansible/_internal/_ansiballz/_builder.py",
+        "lib/ansible/_internal/_collection_proxy.py",
+        "lib/ansible/_internal/_json/__init__.py",
+        "lib/ansible/_internal/_templating/_jinja_plugins.py",
+        "lib/ansible/cli/__init__.py",
+        "lib/ansible/config/base.yml"
+      ],
+      "problem_statement": "# Drop Python 3.11 controller support\n\n## Summary\n\nDrop Python 3.11 controller support.\n\n## Issue Type\n\nFeature Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-4c04b8c7c3f43b9c50831e97e4479e428cef9bd6-v9ed7164ed6041593bc65056d5e53f098174aeaf4",
+      "date": "2025-08-07",
+      "base_commit": "9ed7164ed6041593bc65056d5e53f098174aeaf4",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/playbook/included_file.py"
+      ],
+      "problem_statement": "# IncludedFile: store _from args for proper deduplication\n\n## Summary\n\nFixes #66497\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories\n- #66497: include_role sometimes ignores dynamic vars_from parameter",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-558676fcdc6d3f083f4a5582427675842dbf4c44-v3518d48146b3ecda6f8cfc6c33922aa9d492ad4f",
+      "date": "2025-08-18",
+      "base_commit": "3518d48146b3ecda6f8cfc6c33922aa9d492ad4f",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_templating/_engine.py",
+        "lib/ansible/plugins/lookup/template.py"
+      ],
+      "problem_statement": "# Fix marker handling in templating\n\n## Summary\n\n* allow markers to pass through template lookup\n* avoid tripping markers within Jinja generated code\n\nfixes #85674\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85674: templates: lookup errors while accessing missing key in dict",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-065f202d3021ed0a61dbb34be9bce2bc767dba10-v36f00cdf1a9d8ae029b0ea2ea912c539562ad34a",
+      "date": "2025-09-08",
+      "base_commit": "36f00cdf1a9d8ae029b0ea2ea912c539562ad34a",
+      "num_files": 11,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/cli/scripts/ansible_connection_cli_stub.py",
+        "lib/ansible/executor/task_executor.py",
+        "lib/ansible/playbook/base.py",
+        "lib/ansible/playbook/block.py",
+        "lib/ansible/playbook/handler.py",
+        "lib/ansible/playbook/play.py",
+        "lib/ansible/playbook/play_context.py",
+        "lib/ansible/playbook/role/__init__.py",
+        "lib/ansible/playbook/role/metadata.py",
+        "lib/ansible/playbook/task.py",
+        "lib/ansible/plugins/strategy/__init__.py"
+      ],
+      "problem_statement": "# Remove (de)serialize methods\n\n## Summary\n\nci_complete\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-27a56a34df7c7d879c2c0473aef5c58490024319-vc87dc6ed7d983c102addb14956ec25bf1b794ae1",
+      "date": "2025-09-18",
+      "base_commit": "c87dc6ed7d983c102addb14956ec25bf1b794ae1",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/executor/play_iterator.py",
+        "lib/ansible/playbook/play.py"
+      ],
+      "problem_statement": "# add tech preview play argument spec validation\n\n## Summary\n\nPlay argument spec validation runs after the play-level fact gathering.\n\nThe validate_argspec keyword supports templating for parity with the gather_* keywords. It can be a bool or argument spec string.\n\nThe task is tagged always, and is skippable since it inherits play tags.\n\nUndocumented variables are ignored by default. module_defaults can define the optional argument \"provided_arguments\" to ensure there's documentation for arbitrary options. This provides flexibility and is the same mechanism supporting play-level fact gathering configuration.\n\nWhen validate_argspec is set to True:\n  - A play name is required.\n  \nWhen validate_argspec is True or an argument spec:\n  - A file in the playbook directory matching the pattern {playbook}.meta{ext?} is required.\n  - The playbook meta file must contain a dictionary containing an argument spec in the format:\n\n```yaml\nargument_specs:\n  Play Name:\n    options: {}\n ```\n\n## Issue Type\n\nFeature Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-5e8815b82360d065308550017d548a106a2aa0fc-vced362a50d7825e51d7a160f6c14769a8f9b7338",
+      "date": "2025-09-15",
+      "base_commit": "ced362a50d7825e51d7a160f6c14769a8f9b7338",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/plugins/list.py"
+      ],
+      "problem_statement": "# Fix ansible-doc -l/-F/--metadata-dump for relative imports in filter/test plugins\n\n## Summary\n\nFixes #85754.\n\nansible-doc supports getting the documentation for filter/test plugins in sub-directories, but fails when listing them if any contain relative imports.\n\nI don't see any tests for sidecar documentation for filter/test plugins in a sub-directory (just [this]( https://github.com/ansible/ansible/blob/stable-2.19/test/integration/targets/ansible-doc/runme.sh#L88) and [this](https://github.com/ansible/ansible/blob/stable-2.19/test/integration/targets/collections/posix.yml#L139)), so I added one for that too.\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85754: sub folder relative Import issue for ansible-doc filter",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-58bad718597540acdb9d861b803d5e3cfba240e2-v79ddee15a051ede4dd598a22bb600e9432387226",
+      "date": "2025-09-22",
+      "base_commit": "79ddee15a051ede4dd598a22bb600e9432387226",
+      "num_files": 4,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_display_utils.py",
+        "lib/ansible/executor/task_executor.py",
+        "lib/ansible/plugins/loader.py",
+        "lib/ansible/utils/display.py"
+      ],
+      "problem_statement": "# Move display internals into _internal\n\n## Summary\n\nMove display internals into _internal.\n\nResolves https://github.com/ansible/ansible/issues/85886\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85886: NameError: name '_DeferredWarningContext' is not defined in ansible/utils/display.py",
+      "repo": "ansible/ansible"
+    }
+  ]
+}

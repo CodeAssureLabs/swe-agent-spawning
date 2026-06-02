@@ -1,0 +1,262 @@
+{
+  "repo": "ansible/ansible",
+  "fixed_commit": "5e10a9160c96b238d788b1b196a4c3e80ba6a8bd",
+  "window": "Jan 2026 - May 2026",
+  "total_instances": 19,
+  "hard_instances": 13,
+  "instances": [
+    {
+      "instance_id": "instance_ansible__ansible-d16aaec92d3e4d1d6e5a0e0f3db874f4d64b13d0-v2cedaa24b6b0d7cbe691f8aae0f23764ccdb38dd",
+      "date": "2026-01-07",
+      "base_commit": "2cedaa24b6b0d7cbe691f8aae0f23764ccdb38dd",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/cli/galaxy.py"
+      ],
+      "problem_statement": "# ansible-galaxy - Change error to warning when no paths exist\n\n## Summary\n\nWhen listing collections and roles, a warning is much more appropriate than an error for missing paths.\n\nFixes #73127.\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #73127: `ansible-galaxy collection list` fails",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-f2357cdc53c99b7444f09deea398f0b80f0cb66f-v3661f34811d2746e249730fa77b0b61fdfe5e5a4",
+      "date": "2026-01-09",
+      "base_commit": "3661f34811d2746e249730fa77b0b61fdfe5e5a4",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/executor/module_common.py"
+      ],
+      "problem_statement": "# Fix module_defaults templating for gather_facts, service, and package actions\n\n## Summary\n\nAction plugins which load module_defaults for other modules now template those arguments.\n\nThis can be reproduced by setting module_defaults containing a template for the specific module, and calling the action plugin, e.g.:\n\n```yaml\n- gather_facts:\n  module_defaults:\n    setup:\n      gather_subset: \"{{ 'all' }}\"\n```\n\nFixes #85848\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85848: [2.19 regression] module_defaults for ansible.builtin.setup do not affect implicit fact gathering.",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-2cedaa24b6b0d7cbe691f8aae0f23764ccdb38dd-v7665917d51a0de419c10ce78d7dcae89e1208d49",
+      "date": "2026-01-07",
+      "base_commit": "7665917d51a0de419c10ce78d7dcae89e1208d49",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/plugins/callback/__init__.py",
+        "lib/ansible/plugins/doc_fragments/result_format_callback.py"
+      ],
+      "problem_statement": "# default callback: make YAML line width configurable\n\n## Summary\n\nFixes #84657.\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #84657: ansible.builtin.default callback wraps lines",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-90595736ed35a88e63b6c680d6a1daa38a2ccce1-v29086acfa61f32a9e5b087abdaf4336330ab5456",
+      "date": "2026-02-02",
+      "base_commit": "29086acfa61f32a9e5b087abdaf4336330ab5456",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/plugins/become/__init__.py",
+        "lib/ansible/plugins/connection/local.py"
+      ],
+      "problem_statement": "# Fix local connection interaction with become plugins\n\n## Summary\n\nThe local connection plugin is incorrectly passing a `bytearray` to methods of `become` plugins that expect `bytes`. A [recent change ](https://github.com/ansible/ansible/pull/84700) to the `su` plugin exposed this by breaking the become plugin for different locale settings (the `bytearray` was not properly converted to a `str` for comparison operations). This changes the local connection plugin to send bytes.\n\nFixes #86458\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories\n- #86458: su become method broken on localhost since 2.19 (regression)",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-d9deb945b0186724585747477940fdd1b752325e-v7f17759bfebb4bce227c7a208bdf0a585064bf44",
+      "date": "2026-02-04",
+      "base_commit": "7f17759bfebb4bce227c7a208bdf0a585064bf44",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/executor/task_executor.py"
+      ],
+      "problem_statement": "# async_status: inherit delegate_to from original task\n\n## Summary\n\nFixes https://github.com/ansible/ansible/issues/86491\n\nci_complete\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories\n- #86491: wrong python interpreter found when doing async poll under delegation",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-cc2f35da5b9c4d1159933da383f461517ab6017a-v52b7d4d092359e776da0b79db9752bfc6ca91969",
+      "date": "2026-02-23",
+      "base_commit": "52b7d4d092359e776da0b79db9752bfc6ca91969",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/plugins/callback/default.py",
+        "lib/ansible/plugins/doc_fragments/default_callback.py"
+      ],
+      "problem_statement": "# default callback: add `display_included_hosts` option\n\n## Summary\n\nAdd a new option **`display_included_hosts`** (bool, default `true`) to the **default stdout callback**.\nThis lets users control whether the banner lines printed on `include_tasks` / `include_role` executions (`included: ... for <hosts>`) are shown.\n\n* **Rationale / Design**\n\n  * On large playbooks the *included* banners can flood output. Providing a targeted switch\u2014consistent with existing `display_*` controls (e.g., `display_skipped_hosts`)\u2014improves readability without changing default behavior.\n  * Backward compatible: default remains `true` (banners still shown).\n\n* **Implementation**\n\n  * `plugins/doc_fragments/default_callback.py`\n\n    * Add `options.display_included_hosts` with:\n\n      * `type: bool`, `default: true`\n      * INI: `[defaults] display_included_hosts`\n      * ENV: `ANSIBLE_DISPLAY_INCLUDED_HOSTS`\n  * `plugins/callback/default.py`\n\n    * In `set_options()`: `self.display_included_hosts = self.get_option('display_included_hosts')`\n    * In `v2_playbook_on_include()`: **early return** to suppress the banner when the option is `false`.\n\n* **How to verify**\n\n  1. With defaults (no config): banners appear as before.\n  2. With the option disabled: banners are suppressed while normal task output remains unchanged.\n\n     ```ini\n     # ansible.cfg\n     [defaults]\n     display_included_hosts = false\n     ```\n\n     ```bash\n     ANSIBLE_DISPLAY_INCLUDED_HOSTS=false ansible-playbook ...\n     ```\n\n* **Scope / Compatibility**\n\n  * Scope limited to the banner in `v2_playbook_on_include()`; no impact on `ok/changed/failed/skipped` lines or other callbacks.\n  * No breaking changes (default behavior preserved).\n\n* **Testing**\n\n  * `ansible-test sanity` passes locally.\n\n[truncated]\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #84499: Ability to hide 'included' lines when using include_role or include_tasks with default callback plugin",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-2341354ffaefc8521e6083d3bbfce529143e1d29-v99708930841723f3ecc20e95e82a0cd780003dbd",
+      "date": "2026-03-03",
+      "base_commit": "99708930841723f3ecc20e95e82a0cd780003dbd",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/modules/rpm_key.py"
+      ],
+      "problem_statement": "# Replace gpg in rpm_key with librpm\n\n## Summary\n\nChanges `rpm_key` to no longer use `gpg` command for key manipulation since it does not support version 6 PGP keys. Instead we use `librpm` API to parse the keys. Newer versions of `librpm` will automatically support the newer keys. Since we must still support older systems, we are very limited to which API calls we can use, so much of the work of identifying key parameters is done manually.\n\nNew tests target RHEL 10.1 or higher and Fedora 43 and higher since this is where the PGP v6 key functionality begins to appear in librpm.\n\nFixes #86157\n\nAssisted-by: Claude Code\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #86157: Add PQC key support to `rpm_key` module",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-948f8f42d09e9ad1f0582611fa17a6f5ad52a395-v2341354ffaefc8521e6083d3bbfce529143e1d29",
+      "date": "2026-03-04",
+      "base_commit": "2341354ffaefc8521e6083d3bbfce529143e1d29",
+      "num_files": 3,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/_internal/_yaml/_dumper.py",
+        "lib/ansible/plugins/filter/core.py",
+        "lib/ansible/plugins/filter/to_yaml.yml"
+      ],
+      "problem_statement": "# Configurable vaulted value rendering\n\n## Summary\n\nAllows for configurable handling for rendering vaulted values in playbooks. \n\nFixes: #85722\nCo-authored-by: @nitzmahone\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #85722: Inconsistent rendering of vaulted inline vs. file vaulted variables",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-b1323f3ab1df54f86015a7ec11814e17b2b44896-v948f8f42d09e9ad1f0582611fa17a6f5ad52a395",
+      "date": "2026-03-05",
+      "base_commit": "948f8f42d09e9ad1f0582611fa17a6f5ad52a395",
+      "num_files": 5,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/galaxy/api.py",
+        "lib/ansible/galaxy/collection/__init__.py",
+        "lib/ansible/galaxy/collection/concrete_artifact_manager.py",
+        "lib/ansible/galaxy/dependency_resolution/dataclasses.py",
+        "lib/ansible/galaxy/dependency_resolution/providers.py"
+      ],
+      "problem_statement": "# ansible-galaxy - only install/download collections which support ansible-core by default\n\n## Summary\n\nFixes #78539\n\n* Make ansible-galaxy consider existing `COLLECTIONS_ON_ANSIBLE_VERSION_MISMATCH`  configuration. Now collections with mismatched requirements are only installed/downloaded if it's set to \"ignore\".\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #78539: ansible-galaxy installs collections that are not compatible with the running Ansible version",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-51d5a456ef5342f5b18739d4211ac09ff9ad9a70-v895481957b6613ad7e0e511c98914c4ebec111cc",
+      "date": "2026-03-13",
+      "base_commit": "895481957b6613ad7e0e511c98914c4ebec111cc",
+      "num_files": 3,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/plugins/action/__init__.py",
+        "lib/ansible/plugins/connection/__init__.py",
+        "lib/ansible/plugins/shell/powershell.py"
+      ],
+      "problem_statement": "# Fix powershell method on non-pipelined conns\n\n## Summary\n\nFixes the action plugin mkdtemp and expand_user calls to fallback to the original non-pipelined variants when a connection plugin does not support pipelining. For example a 3rd party Windows connection plugin may not support pipelining and thus cannot use the user _mkdtemp2 and _expand_user2 variants exposed by the `powershell` shell plugin as they require data to be sent over stdin.\n\nFixes: https://github.com/ansible/ansible/issues/86397\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #86397: Powershell modules do not work if the connection plugin does not support pipelining",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-a51536f311d937ee92f7185fac445ca39b2efefa-v03c851d681fab21295c2ea2eec1fdf68fcc60039",
+      "date": "2026-03-25",
+      "base_commit": "03c851d681fab21295c2ea2eec1fdf68fcc60039",
+      "num_files": 3,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/cli/galaxy.py",
+        "lib/ansible/galaxy/collection/concrete_artifact_manager.py",
+        "lib/ansible/galaxy/collection/galaxy_api_proxy.py"
+      ],
+      "problem_statement": "# Fix using the server's validate_certs config when downloading\n\n## Summary\n\nThe server-specific validate_certs configuration was previously only used for GalaxyAPI calls. Now the ConcreteArtifactsManager uses that value when downloading as well.\n\nFixes #86694\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #86694: `ansible-galaxy` CLI ignores `validate_certs` settings for custom Galaxy servers",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-36e9711c26f4efcf3df7b1eb5c66dd1d78785c14-v4da24b8128c8e334f3817f4700f4276c855856db",
+      "date": "2026-03-27",
+      "base_commit": "4da24b8128c8e334f3817f4700f4276c855856db",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/_internal/_templating/_jinja_bits.py"
+      ],
+      "problem_statement": "# Fix deepcopy support for imported templates\n\n## Summary\n\nThis allows a template to import another template and then perform operations that result in a deep copy of a variable. For example, if `deepcopy` is a filter that deep copies its input and `input` is a list, the following template will result in a deep copy of a lazy container, its template engine and ultimately the `AnsibleTemplate` instance which represents the imported template:\n\n```\n{% import 'macro.j2' as unused %}\n{{ input | deepcopy }}\n```\n\nResolves https://github.com/ansible/ansible/issues/86723\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #86723: Regression: Template.__new__() Error with ansible-core 2.19+",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-260fcabb7996a2b64c3daf249c5c0e8ef757311c-v81c461545382fc9f93ba39d966d80f531e3dff9e",
+      "date": "2026-04-02",
+      "base_commit": "81c461545382fc9f93ba39d966d80f531e3dff9e",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/playbook/block.py",
+        "lib/ansible/playbook/play.py"
+      ],
+      "problem_statement": "# ansible-playbook - refactor task processing to remove duplicated loading logic\n\n## Summary\n\nFixes two instances of code duplication inside the playbook module. Rectifies a FIXME and a DTFIX-FUTURE.\n\n## Issue Type\n\nFeature Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-c9f5005be7119648fd33bcce489064e0af4d6d3d-v6d350ae78c5dbdc8204db05f20bcde9599e439af",
+      "date": "2026-04-08",
+      "base_commit": "6d350ae78c5dbdc8204db05f20bcde9599e439af",
+      "num_files": 4,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/module_utils/urls.py",
+        "lib/ansible/modules/uri.py",
+        "lib/ansible/plugins/doc_fragments/url.py",
+        "lib/ansible/plugins/lookup/url.py"
+      ],
+      "problem_statement": "# follow_redirects: remove the deprecated use of yes/no\n\n## Summary\n\nFixes #86790\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #1234: merge the repositories\n- #86790: 2.22 Deprecation: `lib/ansible/plugins/lookup/url.py`",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-3adecacccf408960128d7cc122e8212a88ae4e9b-vb401c9246e879ae15f710be8a4fea38bcecd960f",
+      "date": "2026-04-23",
+      "base_commit": "b401c9246e879ae15f710be8a4fea38bcecd960f",
+      "num_files": 5,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/module_utils/urls.py",
+        "lib/ansible/modules/apt_key.py",
+        "lib/ansible/modules/apt_repository.py",
+        "lib/ansible/modules/get_url.py",
+        "lib/ansible/modules/rpm_key.py"
+      ],
+      "problem_statement": "# Increase support for ftp urls across modules\n\n## Summary\n\nAdds a `module_utils` function to detect `fetch_url` success independent of protocol (http or ftp).  Uses this new fn in relevant modules.\n\nFixes #83321 \n\nNote: I have an integration test for this change, but it would require installing, configuring, starting, and tearing down an FTP server which seems excessive. If I'm wrong I can add it to the PR.\n\n## Issue Type\n\nBugfix Pull Request\n\n## Linked Issues\n\n- #83321: rpm_key does not work with ftp:// URLs",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-f074c20929aad799b935a89494f7cc565ce4b249-v776f90ae4b03fa02cdbf866e5268070d745715a8",
+      "date": "2026-04-30",
+      "base_commit": "776f90ae4b03fa02cdbf866e5268070d745715a8",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/module_utils/urls.py",
+        "lib/ansible/modules/uri.py"
+      ],
+      "problem_statement": "# Drop email in favor of our own multipart generator\n\n## Summary\n\nDrop `email` in favor of our own multipart generator. Fixes #76666\n\nAdditionally adds a new `create_multipart` that will return the new `Multipart` instance. `prepare_multipart` signature remains the same, relying on `create_multipart`.\n\n`Multipart.as_fp()` will return a custom file like object that meets the needs of `urllib`/`http.client` for streaming from a file. The goal of this custom object is that it doesn't put all the content into memory, it streams building the multipart as calls to `read()` happen in smaller chunks.\n\n## Issue Type\n\nFeature Pull Request\n\n## Linked Issues\n\n- #76666: URI multipart file size limitation",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-49f1615157c54a119d0e51b4df0e7c410ec0e766-vff6b7e404a79ec98ecf99d41e923b95ae9d4fa2d",
+      "date": "2026-05-01",
+      "base_commit": "ff6b7e404a79ec98ecf99d41e923b95ae9d4fa2d",
+      "num_files": 2,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/plugins/connection/psrp.py",
+        "lib/ansible/plugins/connection/winrm.py"
+      ],
+      "problem_statement": "# winrm/psrp - apply no_log to stdout/stderr logs\n\n## Summary\n\nThis change censors the raw stdout/stderr logging used on the `winrm` and `psrp` connection plugins with a verbosity level of 5 being set. While by default the raw output isn't sensitive if a user has set a task with `no_log: true` we shouldn't be displaying the raw results of that task.\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-30d7849e7efc5f0d39badd4ac52511180e6f2b9d-v49f1615157c54a119d0e51b4df0e7c410ec0e766",
+      "date": "2026-05-05",
+      "base_commit": "49f1615157c54a119d0e51b4df0e7c410ec0e766",
+      "num_files": 3,
+      "difficulty": "hard",
+      "gold_files": [
+        "lib/ansible/cli/console.py",
+        "lib/ansible/cli/doc.py",
+        "lib/ansible/utils/plugin_docs.py"
+      ],
+      "problem_statement": "# Deprecate is_module parameter\n\n## Summary\n\n* Use plugin_type=module instead of is_module=True\n\nSigned-off-by: Abhijeet Kasurde <Akasurde@redhat.com>\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    },
+    {
+      "instance_id": "instance_ansible__ansible-cb535cf3d3159e24b813f4eb9085340ff67c9ac1-vb7c0900272fd428f336f30714089e3916fcc10f9",
+      "date": "2026-05-12",
+      "base_commit": "b7c0900272fd428f336f30714089e3916fcc10f9",
+      "num_files": 1,
+      "difficulty": "easy",
+      "gold_files": [
+        "lib/ansible/plugins/strategy/__init__.py"
+      ],
+      "problem_statement": "# Fix broken callback dispatch on skipped meta tasks\n\n## Summary\n\n* Added test coverage\n\n## Issue Type\n\nBugfix Pull Request",
+      "repo": "ansible/ansible"
+    }
+  ]
+}
