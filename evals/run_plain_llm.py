@@ -5,7 +5,7 @@ No REPL, no file system access: the model answers from the issue text alone.
 This is the lowest baseline. Expected to struggle since it can't explore the repo.
 
 Usage:
-    uv run python evals/run_plain_llm.py --trial 1
+    uv run python evals/run_plain_llm.py evals/benchmark_ansible.json
 """
 
 import os
@@ -13,6 +13,7 @@ import json
 import time
 import argparse
 from datetime import datetime
+from pathlib import Path
 
 import anthropic
 from dotenv import load_dotenv, find_dotenv
@@ -20,31 +21,51 @@ from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv(), override=True)
 
 MODEL    = "claude-haiku-4-5"
-BENCHMARK = "evals/benchmark_ansible.json"
+DEFAULT_MAX_TOKENS = 4096
 DOC_PREFIXES = ("docs/", "changelogs/")
 
-SYSTEM = (
-    "You are a software engineering assistant. "
-    "Given a GitHub issue for the ansible/ansible repository, "
-    "identify which files in the repository would need to be modified to fix the issue. "
-    "Include source and documentation files that would be modified. "
-    "Do not include test files unless the issue specifically requires changing test infrastructure.\n\n"
-    "You do NOT have access to the repository. Use your knowledge of ansible's structure "
-    "to make your best guess.\n\n"
-    "Respond with ONLY a JSON object in this format:\n"
-    '{"files": ["lib/ansible/cli/galaxy.py", "docs/docsite/rst/guide.rst"]}\n\n'
-    "Use repo-relative paths. No leading ./ or absolute paths."
+PROMPT_TASK = (
+    "Identify the repo-relative files that would need to be modified to implement the requested fix. "
+    "Include code, test, and documentation files when they would need edits. Do not edit files. "
+    # "Use the repository tools to inspect the codebase. "  # Plain LLM has no tool/repo access.
+    "Prefer exact existing file paths."
 )
+PROMPT_OUTPUT = (
+    "Your final answer must be valid JSON only, with this schema:\n"
+    '{"files": ["path/to/file.py"], "rationale": "short reason"}'
+)
+SYSTEM_PROMPT = f"{PROMPT_TASK}\n\n{PROMPT_OUTPUT}"
 
 
-def extract_files_from_response(response: str) -> list[str]:
+def normalize_path(path: str) -> str:
+    cleaned = path.strip().strip("'\"` ,;")
+    cleaned = cleaned.replace("\\", "/")
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    return cleaned.lstrip("/")
+
+
+def dedupe_paths(paths: list[str]) -> list[str]:
+    seen = set()
+    out = []
+    for raw in paths:
+        path = normalize_path(raw)
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+def extract_files_from_response(response: str) -> tuple[list[str], str]:
     import re, json as _json
 
     # Try JSON parse first
     try:
         data = _json.loads(response.strip())
         if isinstance(data, dict) and "files" in data:
-            return [f.strip() for f in data["files"] if isinstance(f, str)]
+            return dedupe_paths([f for f in data["files"] if isinstance(f, str)]), "json-object"
+        if isinstance(data, list):
+            return dedupe_paths([f for f in data if isinstance(f, str)]), "json-array"
     except Exception:
         pass
 
@@ -53,17 +74,18 @@ def extract_files_from_response(response: str) -> list[str]:
     if match:
         try:
             data = _json.loads(match.group())
-            return [f.strip() for f in data.get("files", [])]
+            return dedupe_paths([f for f in data.get("files", []) if isinstance(f, str)]), "json-object"
         except Exception:
             pass
 
     # Fallback: extract file paths
     paths = re.findall(r'[\w/.-]+\.(?:py|yml|yaml|rst|cs|js)\b', response)
-    return list(dict.fromkeys(paths))
+    return dedupe_paths(paths), "regex"
 
 
 def is_doc(path: str) -> bool:
-    return any(path.startswith(prefix) for prefix in DOC_PREFIXES)
+    suffix = Path(path).suffix.lower()
+    return any(path.startswith(prefix) for prefix in DOC_PREFIXES) or suffix in {".md", ".rst", ".txt"}
 
 
 def score_set(pred_set: set[str], gold_set: set[str]) -> dict:
@@ -91,27 +113,37 @@ def score_set(pred_set: set[str], gold_set: set[str]) -> dict:
     }
 
 
+def score_subset(predicted: list[str], gold: list[str], *, docs: bool) -> dict:
+    return score_set(
+        {path for path in predicted if is_doc(path) == docs},
+        {path for path in gold if is_doc(path) == docs},
+    )
+
+
 def build_summary(results: list[dict], elapsed_total: float) -> dict:
     n = len(results)
     if n == 0:
         return {}
-    tp_total = sum(r["tp"] for r in results)
-    pred_total = sum(r["tp"] + r["fp"] for r in results)
-    gold_total = sum(r["tp"] + r["fn"] for r in results)
+    error_cases = sum(1 for r in results if r.get("status") == "error")
+    tp_total = sum(r["file_score"]["tp"] for r in results)
+    pred_total = sum(r["file_score"]["tp"] + r["file_score"]["fp"] for r in results)
+    gold_total = sum(r["file_score"]["tp"] + r["file_score"]["fn"] for r in results)
     micro_p = tp_total / pred_total if pred_total else 0.0
     micro_r = tp_total / gold_total if gold_total else 0.0
     micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
-    exact_matches = sum(1 for r in results if r["exact_match"])
-    all_gold = sum(1 for r in results if r["all_gold_found"])
+    exact_matches = sum(1 for r in results if r["file_score"]["exact_match"])
+    all_gold = sum(1 for r in results if r["file_score"]["all_gold_found"])
     return {
         "total": n,
+        "completed": n - error_cases,
+        "error_cases": error_cases,
         "exact_matches": exact_matches,
         "exact_match_rate": round(exact_matches / n, 4),
         "all_gold_found": all_gold,
         "all_gold_found_rate": round(all_gold / n, 4),
-        "macro_precision": round(sum(r["precision"] for r in results) / n, 4),
-        "macro_recall": round(sum(r["recall"] for r in results) / n, 4),
-        "macro_f1": round(sum(r["f1"] for r in results) / n, 4),
+        "macro_precision": round(sum(r["file_score"]["precision"] for r in results) / n, 4),
+        "macro_recall": round(sum(r["file_score"]["recall"] for r in results) / n, 4),
+        "macro_f1": round(sum(r["file_score"]["f1"] for r in results) / n, 4),
         "micro_precision": round(micro_p, 4),
         "micro_recall": round(micro_r, 4),
         "micro_f1": round(micro_f1, 4),
@@ -120,8 +152,6 @@ def build_summary(results: list[dict], elapsed_total: float) -> dict:
         "total_tokens": sum(r["total_tokens"] for r in results),
         "total_input_tokens": sum(r["input_tokens"] for r in results),
         "total_output_tokens": sum(r["output_tokens"] for r in results),
-        "total_repl_calls": 0,
-        "total_turns": sum(r.get("turn_count", len(r.get("conversation_history", []))) for r in results),
         "total_elapsed_s": round(elapsed_total, 2),
     }
 
@@ -139,19 +169,19 @@ def build_groups(results: list[dict]) -> dict:
         if not subset:
             continue
         n = len(subset)
-        tp_total = sum(r["tp"] for r in subset)
-        pred_total = sum(r["tp"] + r["fp"] for r in subset)
-        gold_total = sum(r["tp"] + r["fn"] for r in subset)
+        tp_total = sum(r["file_score"]["tp"] for r in subset)
+        pred_total = sum(r["file_score"]["tp"] + r["file_score"]["fp"] for r in subset)
+        gold_total = sum(r["file_score"]["tp"] + r["file_score"]["fn"] for r in subset)
         micro_p = tp_total / pred_total if pred_total else 0.0
         micro_r = tp_total / gold_total if gold_total else 0.0
         micro_f1 = 2 * micro_p * micro_r / (micro_p + micro_r) if (micro_p + micro_r) else 0.0
-        all_gold = sum(1 for r in subset if r["all_gold_found"])
+        all_gold = sum(1 for r in subset if r["file_score"]["all_gold_found"])
         groups[name] = {
             "total": n,
-            "exact_matches": sum(1 for r in subset if r["exact_match"]),
+            "exact_matches": sum(1 for r in subset if r["file_score"]["exact_match"]),
             "all_gold_found": all_gold,
             "all_gold_found_rate": round(all_gold / n, 4),
-            "macro_f1": round(sum(r["f1"] for r in subset) / n, 4),
+            "macro_f1": round(sum(r["file_score"]["f1"] for r in subset) / n, 4),
             "micro_precision": round(micro_p, 4),
             "micro_recall": round(micro_r, 4),
             "micro_f1": round(micro_f1, 4),
@@ -159,33 +189,129 @@ def build_groups(results: list[dict]) -> dict:
     return groups
 
 
-def run(trial: int = 1, model: str = MODEL, benchmark_path: str = BENCHMARK):
+def default_out_path(benchmark_path: Path) -> Path:
+    return benchmark_path.with_name(benchmark_path.stem + "_plain_llm_report.json")
+
+
+def default_log_dir(out_path: Path) -> Path:
+    return out_path.with_name(out_path.stem + "_logs")
+
+
+def uniquify_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    suffix = 2
+    while True:
+        candidate = path.with_name(f"{path.name}_{suffix}")
+        if not candidate.exists():
+            return candidate
+        suffix += 1
+
+
+def write_report(report: dict, out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path.with_name(out_path.name + ".tmp")
+    tmp_path.write_text(json.dumps(report, indent=2))
+    tmp_path.replace(out_path)
+
+
+def make_result_entry(
+    *,
+    index: int,
+    inst: dict,
+    benchmark: dict,
+    output: str,
+    predicted: list[str],
+    extraction_mode: str,
+    elapsed: float,
+    input_tokens: int,
+    output_tokens: int,
+    status: str,
+    error: str | None = None,
+) -> dict:
+    gold_set = set(inst["gold_files"])
+    pred_set = set(predicted)
+    gold_docs = {path for path in gold_set if is_doc(path)}
+    file_score = score_set(pred_set, gold_set)
+    doc_score = score_subset(predicted, inst["gold_files"], docs=True)
+    code_score = score_subset(predicted, inst["gold_files"], docs=False)
+    assistant_content = output if status == "completed" else f"|ERROR| {error}"
+    conversation_history = [
+        {"role": "user", "content": inst["problem_statement"]},
+        {"role": "assistant", "content": assistant_content},
+    ]
+    entry = {
+        "index": index,
+        "instance_id": inst["instance_id"],
+        "date": inst.get("date", ""),
+        "difficulty": inst["difficulty"],
+        "num_files": len(inst["gold_files"]),
+        "problem_statement": inst["problem_statement"],
+        "gold_files": inst["gold_files"],
+        "gold_doc_files": sorted(gold_docs),
+        "predicted_files": predicted,
+        "prediction_extraction_mode": extraction_mode,
+        "base_commit": inst.get("base_commit", benchmark.get("fixed_commit")),
+        "answer": assistant_content,
+        "file_score": file_score,
+        "doc_file_score": doc_score,
+        "code_file_score": code_score,
+        "elapsed_s": round(elapsed, 2),
+        "total_tokens": input_tokens + output_tokens,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "conversation_history": conversation_history,
+        "any_correct": file_score["tp"] > 0,
+        "status": status,
+    }
+    if error is not None:
+        entry["error"] = error
+    return entry
+
+
+def run(
+    model: str = MODEL,
+    benchmark_path: Path | str = Path("evals/benchmark_ansible.json"),
+    limit: int | None = None,
+    log_dir: Path | str | None = None,
+    out_path: Path | str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("Set ANTHROPIC_API_KEY in .env")
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    with open(benchmark_path) as f:
+    benchmark_path = Path(benchmark_path).resolve()
+    with benchmark_path.open() as f:
         benchmark = json.load(f)
 
-    instances = benchmark["instances"]
-    log_dir   = f"evals/logs/plain_llm_ansible_trial{trial}"
+    all_instances = benchmark["instances"]
+    selected_instances = list(enumerate(all_instances))
+    if limit is not None:
+        selected_instances = selected_instances[:limit]
+    out_path = Path(out_path).resolve() if out_path else default_out_path(benchmark_path)
+    if log_dir is None:
+        log_dir = default_log_dir(out_path)
+    log_dir = uniquify_path(Path(log_dir))
     os.makedirs(log_dir, exist_ok=True)
     index_path = os.path.join(log_dir, "index.jsonl")
-    report_path = os.path.join(log_dir, f"report_trial{trial}.json")
+    open(index_path, "w").close()
 
     print(f"\n{'='*65}")
     print(f"Plain LLM Baseline | ansible/ansible | model={model}")
     print(f"NO REPL: model answers from issue text only (no repo access)")
-    print(f"Instances: {len(instances)} | Trial: {trial}")
+    print(f"Instances: {len(selected_instances)} selected / {len(all_instances)} total")
+    print(f"Max output tokens: {max_tokens}")
     print(f"Logs -> {log_dir}")
+    print(f"Report -> {out_path}")
     print(f"{'='*65}")
 
     results = []
     t_start = time.perf_counter()
-    for i, inst in enumerate(instances):
-        print(f"\n[{i+1}/{len(instances)}] [{inst['difficulty'].upper()}] "
+    for display_idx, (i, inst) in enumerate(selected_instances, 1):
+        print(f"\n[{display_idx}/{len(selected_instances)}] [{inst['difficulty'].upper()}] "
               f"{inst['instance_id'][:50]}...")
         print(f"  Q: {inst['problem_statement'][:100]}...")
         print(f"  Gold: {inst['gold_files']}")
@@ -194,8 +320,8 @@ def run(trial: int = 1, model: str = MODEL, benchmark_path: str = BENCHMARK):
         try:
             resp = client.messages.create(
                 model=model,
-                max_tokens=512,
-                system=SYSTEM,
+                max_tokens=max_tokens,
+                system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": inst["problem_statement"]}],
             )
             output        = resp.content[0].text.strip()
@@ -204,19 +330,42 @@ def run(trial: int = 1, model: str = MODEL, benchmark_path: str = BENCHMARK):
             total_tokens  = input_tokens + output_tokens
         except Exception as e:
             print(f"  ERROR: {e}")
+            elapsed = time.perf_counter() - t0
+            entry = make_result_entry(
+                index=i,
+                inst=inst,
+                benchmark=benchmark,
+                output="",
+                predicted=[],
+                extraction_mode="error",
+                elapsed=elapsed,
+                input_tokens=0,
+                output_tokens=0,
+                status="error",
+                error=str(e),
+            )
+            results.append(entry)
+            with open(index_path, "a") as f:
+                json.dump(entry, f)
+                f.write("\n")
             continue
         elapsed = time.perf_counter() - t0
 
-        predicted = extract_files_from_response(output)
-        pred_set = set(predicted)
-        gold_set = set(inst["gold_files"])
-        gold_docs = {path for path in gold_set if is_doc(path)}
-        file_score = score_set(pred_set, gold_set)
-        conversation_history = [
-            {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": inst["problem_statement"]},
-            {"role": "assistant", "content": output},
-        ]
+        predicted, extraction_mode = extract_files_from_response(output)
+        entry = make_result_entry(
+            index=i,
+            inst=inst,
+            benchmark=benchmark,
+            output=output,
+            predicted=predicted,
+            extraction_mode=extraction_mode,
+            elapsed=elapsed,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            status="completed",
+            error=None,
+        )
+        file_score = entry["file_score"]
 
         print(f"  Predicted: {predicted}")
         print(f"  P={file_score['precision']:.2f} R={file_score['recall']:.2f} "
@@ -224,42 +373,6 @@ def run(trial: int = 1, model: str = MODEL, benchmark_path: str = BENCHMARK):
         print(f"  Tokens: {total_tokens:,} ({input_tokens} in / {output_tokens} out) "
               f"Time: {elapsed:.1f}s")
 
-        entry = {
-            "index": i,
-            "instance_id": inst["instance_id"],
-            "date": inst.get("date", ""),
-            "difficulty": inst["difficulty"],
-            "num_files": len(inst["gold_files"]),
-            "problem_statement": inst["problem_statement"],
-            "gold_files": inst["gold_files"],
-            "gold_doc_files": sorted(gold_docs),
-            "predicted_files": predicted,
-            "base_commit": inst.get("base_commit", benchmark.get("fixed_commit")),
-            "actual_commit": inst.get("base_commit", benchmark.get("fixed_commit")),
-            "answer": output,
-            "tp": file_score["tp"],
-            "fp": file_score["fp"],
-            "fn": file_score["fn"],
-            "precision": file_score["precision"],
-            "recall": file_score["recall"],
-            "f1": file_score["f1"],
-            "exact_match": file_score["exact_match"],
-            "all_gold_found": file_score["all_gold_found"],
-            "missing_files": file_score["missing_files"],
-            "extra_files": file_score["extra_files"],
-            "elapsed_s": round(elapsed, 2),
-            "total_tokens": total_tokens,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "repl_calls": 0,
-            "turn_count": len(conversation_history),
-            "conversation_history": conversation_history,
-            "trace_format": "single_anthropic_messages_call_embedded",
-            "any_correct": file_score["tp"] > 0,
-            "model": model,
-            "trial": trial,
-            "pred_files": predicted,
-        }
         results.append(entry)
 
         with open(index_path, "a") as f:
@@ -272,41 +385,49 @@ def run(trial: int = 1, model: str = MODEL, benchmark_path: str = BENCHMARK):
         report = {
             "run_at": datetime.now().isoformat(),
             "benchmark": {
-                "repo": benchmark.get("repo", "ansible/ansible"),
-                "fixed_commit": benchmark.get("fixed_commit"),
-                "window": benchmark.get("window", ""),
-                "total_instances": len(instances),
-                "hard_instances": sum(1 for inst in instances if inst["difficulty"] == "hard"),
+                key: value for key, value in benchmark.items()
+                if key != "instances"
             },
             "config": {
+                "runner": "plain_llm",
+                "provider": "anthropic",
                 "model": model,
-                "trial": trial,
+                "max_tokens": max_tokens,
                 "condition": "plain_llm",
-                "tool_set": "none",
+                "system_prompt": SYSTEM_PROMPT,
             },
             "summary": build_summary(results, elapsed_total),
             "groups": build_groups(results),
             "results": results,
         }
-        with open(report_path, "w") as f:
-            json.dump(report, f, indent=2)
+        write_report(report, out_path)
 
         s = report["summary"]
 
         print(f"\n{'='*65}")
-        print(f"RESULTS ({s['total']} instances, trial {trial})")
+        print(f"RESULTS ({s['total']} instances)")
         print(f"  Micro F1: {s['micro_f1']:.3f}  "
               f"(P={s['micro_precision']:.3f} R={s['micro_recall']:.3f})")
         print(f"  Macro F1: {s['macro_f1']:.3f}")
         print(f"  All-gold: {s['all_gold_found']}/{s['total']}")
         print(f"  index.jsonl -> {index_path}")
-        print(f"  report JSON -> {report_path}")
+        print(f"  report JSON -> {out_path}")
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--trial",     type=int, default=1)
+    p.add_argument("benchmark", type=Path, help="Path to benchmark JSON")
     p.add_argument("--model",     default=MODEL)
-    p.add_argument("--benchmark", default=BENCHMARK)
+    p.add_argument("--out", type=Path, default=None, help="Output report path")
+    p.add_argument("--limit", type=int, default=None,
+                   help="Limit selected instances; useful for smoke tests")
+    p.add_argument("--log-dir", default=None,
+                   help="Override output log directory")
     args = p.parse_args()
-    run(trial=args.trial, model=args.model, benchmark_path=args.benchmark)
+    run(
+        model=args.model,
+        benchmark_path=args.benchmark,
+        limit=args.limit,
+        log_dir=args.log_dir,
+        out_path=args.out,
+    )
