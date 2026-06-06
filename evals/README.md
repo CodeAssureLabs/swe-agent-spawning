@@ -64,19 +64,21 @@ output, and `file_prediction_schema.schema`.
 
 ```bash
 uv run python evals/run_plain_llm.py \
-  --benchmark evals/benchmark_ansible.json \
-  --trial 1
+  evals/benchmark_ansible.json \
+  --out evals/benchmark_ansible_plain_llm_report.json
 ```
 
-This baseline uses the issue text only and does not inspect the repository.
+This baseline uses the issue text only and relies on the model's prior
+knowledge of Ansible's repository structure. Its report stores the shared
+file-localization system prompt once under `config`.
 
 ## Single-Agent RLM Baseline
 
 ```bash
 uv run python evals/run_rlm.py \
-  --benchmark evals/benchmark_ansible.json \
+  evals/benchmark_ansible.json \
   --repo evals/repos/ansible \
-  --trial 1 \
+  --out evals/benchmark_ansible_rlm_report.json \
   --timeout 3600
 ```
 
@@ -89,9 +91,9 @@ set `--max-depth 2`:
 
 ```bash
 uv run python evals/run_rlm.py \
-  --benchmark evals/benchmark_ansible.json \
+  evals/benchmark_ansible.json \
   --repo evals/repos/ansible \
-  --trial 1 \
+  --out evals/benchmark_ansible_rlm_depth2_report.json \
   --timeout 7200 \
   --max-depth 2
 ```
@@ -99,6 +101,20 @@ uv run python evals/run_rlm.py \
 RLM reports include inclusive per-instance token counts in `rlm_usage_summary`,
 with `rlm_root_usage_summary` and `nested_rlm_usage_summary` kept separately so
 child-RLM usage can be audited.
+
+If a prior RLM run has runtime errors or missing instance rows, rerun only those
+instances without replacing the old report:
+
+```bash
+uv run python evals/run_rlm.py \
+  evals/benchmark_ansible.json \
+  --repo evals/repos/ansible \
+  --rerun-failed-from evals/benchmark_ansible_rlm_report.json \
+  --out evals/benchmark_ansible_rlm_failed_rerun_report.json
+```
+
+Runtime failures are retained as explicit
+`status: "error"` rows, so future failed-only reruns can select them directly.
 
 ## Dataset Generation
 
