@@ -82,6 +82,8 @@ uv run python evals/run_rlm.py \
   --timeout 3600
 ```
 
+Streaming is used by default for Anthropic completions. This keeps long requests more stable while still returning a single final message.
+
 This baseline uses the RLM package with a single repository REPL context. It
 defaults to the Ansible checkout at `evals/repos/ansible`; pass `--repo` to use
 another checkout location.
@@ -103,14 +105,14 @@ with `rlm_root_usage_summary` and `nested_rlm_usage_summary` kept separately so
 child-RLM usage can be audited.
 
 If a prior RLM run has runtime errors or missing instance rows, rerun only those
-instances without replacing the old report:
+instances and replace the same report with the merged complete results:
 
 ```bash
 uv run python evals/run_rlm.py \
   evals/benchmark_ansible.json \
   --repo evals/repos/ansible \
-  --rerun-failed-from evals/benchmark_ansible_rlm_report.json \
-  --out evals/benchmark_ansible_rlm_failed_rerun_report.json
+  --rerun-failed \
+  --out evals/benchmark_ansible_rlm_report.json
 ```
 
 Runtime failures are retained as explicit

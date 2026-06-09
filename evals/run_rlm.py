@@ -37,6 +37,9 @@ DEFAULT_REPO_PATH = "repos/ansible"
 DEFAULT_TIMEOUT = 3600
 DEFAULT_MAX_DEPTH = 1
 
+
+TRACE_SAMPLE_RE = re.compile(r"^sample_(\d+)_")
+
 PROMPT_TASK = (
     "Identify the repo-relative files that would need to be modified to implement the requested fix. "
     "Include code, test, and documentation files when they would need edits. Do not edit files. "
@@ -116,12 +119,160 @@ def merge_usage_summaries(*summaries):
     return merged
 
 
+def resolve_report_and_log_paths(out_path: Path | None, benchmark_path: Path) -> tuple[Path, Path]:
+    if out_path is None:
+        report_path = benchmark_path.with_name(f"{benchmark_path.stem}_rlm_report.json")
+        return report_path, report_path.with_name(f"{report_path.stem}_logs")
+
+    resolved = Path(out_path).resolve()
+    return resolved, resolved.with_name(f"{resolved.stem}_logs")
+
+
+def load_previous_results(
+    report_path: Path,
+    log_dir: Path,
+    instances: list[dict],
+    bench_commit: str,
+    model: str,
+) -> list[dict]:
+    if report_path.exists():
+        with report_path.open() as f:
+            previous_data = json.load(f)
+        if isinstance(previous_data, dict):
+            return previous_data.get("results", [])
+        if isinstance(previous_data, list):
+            return previous_data
+        raise ValueError(f"Unsupported previous result format: {report_path}")
+
+    index_path = log_dir / "index.jsonl"
+    if index_path.exists():
+        previous_results = []
+        with index_path.open() as f:
+            for line in f:
+                if line.strip():
+                    previous_results.append(json.loads(line))
+        if previous_results:
+            return previous_results
+
+    if log_dir.exists():
+        recovered = infer_results_from_traces(log_dir, instances, bench_commit, model)
+        if recovered:
+            return recovered
+
+    raise ValueError(f"Previous results not found in {log_dir} or {report_path}")
+
+
+def infer_results_from_traces(
+    trace_dir: Path,
+    instances: list[dict],
+    bench_commit: str,
+    model: str,
+) -> list[dict]:
+    """
+    Recover completed/error rows from a traces directory when index.jsonl is missing.
+    """
+    recovered = []
+    indexed_instances = {idx: inst for idx, inst in enumerate(instances)}
+
+    for trace_path in sorted(trace_dir.glob("sample_*.jsonl")):
+        stem = trace_path.name
+        m = TRACE_SAMPLE_RE.match(stem)
+        if not m:
+            continue
+        try:
+            idx = int(m.group(1))
+        except ValueError:
+            continue
+
+        inst = indexed_instances.get(idx)
+        if inst is None:
+            continue
+
+        iterations = []
+        final_answer = None
+        with trace_path.open() as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                if isinstance(entry, dict):
+                    iterations.append(entry)
+                    if isinstance(entry.get("final_answer"), str) and entry.get("final_answer").strip():
+                        final_answer = entry.get("final_answer")
+
+        if final_answer is None and iterations:
+            last = iterations[-1].get("response")
+            if isinstance(last, str) and last.strip():
+                final_answer = last
+
+        response = final_answer or "|ERROR| Missing final answer in recovered trace"
+        status = "completed" if final_answer else "error"
+        predicted = extract_files(response) if final_answer else []
+        base_commit = inst.get("base_commit", bench_commit)
+        usage_summary = empty_usage_summary()
+        entry = make_result_entry(
+            idx=idx,
+            inst=inst,
+            model=model,
+            base_commit=base_commit,
+            response=response,
+            predicted=predicted,
+            elapsed=0.0,
+            total_in=0,
+            total_out=0,
+            llm_calls=0,
+            repl_calls=0,
+            usage_by_model=usage_summary,
+            root_usage_summary=usage_summary,
+            nested_usage_summary=usage_summary,
+            trajectory={"iterations": iterations},
+            trace_path=str(trace_path),
+            status=status,
+            error=None if final_answer else "Missing final answer in trace",
+        )
+        recovered.append(entry)
+
+    return recovered
+
+
 def usage_totals(summary):
     model_summaries = summary.get("model_usage_summaries", {})
     input_tokens = sum(v.get("total_input_tokens", 0) or 0 for v in model_summaries.values())
     output_tokens = sum(v.get("total_output_tokens", 0) or 0 for v in model_summaries.values())
     calls = sum(v.get("total_calls", 0) or 0 for v in model_summaries.values())
     return input_tokens, output_tokens, calls
+
+
+def merge_existing_and_rerun_results(previous_results, rerun_results, instances):
+    by_instance = {}
+    by_index = {}
+
+    for result in previous_results:
+        instance_id = result.get("instance_id")
+        idx = result.get("index")
+        if instance_id is not None:
+            by_instance[instance_id] = result
+        if isinstance(idx, int):
+            by_index[idx] = result
+
+    for result in rerun_results:
+        instance_id = result.get("instance_id")
+        idx = result.get("index")
+        if instance_id is not None:
+            by_instance[instance_id] = result
+        if isinstance(idx, int):
+            by_index[idx] = result
+
+    merged_results = []
+    for idx, inst in enumerate(instances):
+        instance_id = inst.get("instance_id")
+        if instance_id is not None and instance_id in by_instance:
+            merged_results.append(by_instance[instance_id])
+            continue
+        if idx in by_index:
+            merged_results.append(by_index[idx])
+
+    return merged_results
 
 
 def nested_rlm_usage_from_trajectory(trajectory):
@@ -385,8 +536,7 @@ def run(
     timeout=DEFAULT_TIMEOUT,
     max_depth=DEFAULT_MAX_DEPTH,
     limit=None,
-    rerun_failed_from=None,
-    log_dir=None,
+    rerun_failed=False,
     out_path=None,
 ):
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -400,30 +550,20 @@ def run(
     with benchmark_path.open() as f:
         bench = json.load(f)
 
-    instances    = bench['instances']
+    instances = bench["instances"]
     selected_instances = list(enumerate(instances))
     rerun_source = None
     rerun_failed_ids = set()
-    if rerun_failed_from:
-        rerun_source = os.path.abspath(rerun_failed_from)
-        if not os.path.exists(rerun_source):
-            raise ValueError(f"Previous result path not found: {rerun_source}")
-        if rerun_source.endswith(".jsonl"):
-            previous_results = []
-            with open(rerun_source) as f:
-                for line in f:
-                    if line.strip():
-                        previous_results.append(json.loads(line))
-        else:
-            with open(rerun_source) as f:
-                previous_data = json.load(f)
-            if isinstance(previous_data, list):
-                previous_results = previous_data
-            elif isinstance(previous_data, dict):
-                previous_results = previous_data.get("results", [])
-            else:
-                raise ValueError(f"Unsupported previous result format: {rerun_source}")
-
+    previous_results = []
+    if rerun_failed:
+        report_path, log_dir = resolve_report_and_log_paths(out_path, benchmark_path)
+        previous_results = load_previous_results(
+            report_path=report_path,
+            log_dir=log_dir,
+            instances=instances,
+            bench_commit=bench.get("fixed_commit", "HEAD"),
+            model=model,
+        )
         previous_by_instance_id = {}
         previous_by_index = {}
         for result in previous_results:
@@ -449,44 +589,33 @@ def run(
             if inst.get("instance_id") in rerun_failed_ids
         ]
         if not selected_instances:
-            print(f"No failed or missing instances found in {rerun_source}.")
+            print(f"No failed or missing instances found in {report_path}.")
             return
+        rerun_source = str(report_path)
     if limit is not None:
         selected_instances = selected_instances[:limit]
 
     # Top-level fixed_commit is optional; new benchmarks may use per-instance base_commit.
-    bench_commit = bench.get('fixed_commit', 'HEAD')
-    out_path_was_defaulted = out_path is None
-    if out_path:
-        out_path = Path(out_path).resolve()
-    else:
-        report_suffix = "_rlm_failed_rerun_report.json" if rerun_failed_from else "_rlm_report.json"
-        out_path = benchmark_path.with_name(benchmark_path.stem + report_suffix)
-    if rerun_failed_from and out_path_was_defaulted:
-        suffix = 2
-        base_out_path = out_path
-        while out_path.exists():
-            out_path = base_out_path.with_name(f"{base_out_path.stem}_{suffix}{base_out_path.suffix}")
-            suffix += 1
-    if log_dir is None:
-        log_dir = out_path.with_name(out_path.stem + "_logs")
-    log_dir = str(log_dir)
-    suffix = 2
-    base_log_dir = log_dir
-    while os.path.exists(log_dir):
-        log_dir = f"{base_log_dir}_{suffix}"
-        suffix += 1
+    bench_commit = bench.get("fixed_commit", "HEAD")
+    report_path, log_dir = resolve_report_and_log_paths(out_path, benchmark_path)
+
     os.makedirs(log_dir, exist_ok=True)
-    index_path   = os.path.join(log_dir, "index.jsonl")
-    open(index_path, "w").close()
+    index_path = os.path.join(str(log_dir), "index.jsonl")
+    index_tmp = index_path + ".tmp"
+
+    def write_index(rows):
+        with open(index_tmp, "w") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+        os.replace(index_tmp, index_path)
 
     print(f"\n{'='*65}")
     print(f"RLM File Localization (final) | model={model}")
     print(f"Benchmark: {benchmark_path}  ({len(selected_instances)} selected / {len(instances)} total instances)")
     print(f"Repo: {repo_path}")
     print(f"Timeout: {timeout}s  |  Max depth: {max_depth}  |  Logs -> {log_dir}")
-    print(f"Report -> {out_path}")
-    if rerun_failed_from:
+    print(f"Report -> {report_path}")
+    if rerun_failed:
         print(f"Failed-only rerun from: {rerun_source}  |  failed/missing found: {len(rerun_failed_ids)}")
     print(f"{'='*65}")
 
@@ -510,8 +639,11 @@ def run(
         if checkout.returncode != 0:
             print(f"  WARN: git checkout failed: {checkout.stderr.strip()}")
 
-        logger = CompactRLMLogger(log_dir=log_dir,
-                                  file_name=f"sample_{idx:03d}_{inst['difficulty']}")
+        trace_file = f"sample_{idx:03d}_{inst['difficulty']}"
+        logger = CompactRLMLogger(log_dir=str(log_dir),
+                                  file_name=trace_file)
+        if rerun_failed and logger.log_file_path:
+            open(logger.log_file_path, "w").close()
 
         prompt_context = (
             f"import os, subprocess\n"
@@ -575,8 +707,15 @@ def run(
                 error=str(e),
             )
             all_results.append(entry)
-            with open(index_path, "a") as f:
-                f.write(json.dumps(entry) + '\n')
+            if rerun_failed:
+                merged_results = merge_existing_and_rerun_results(
+                    previous_results,
+                    all_results,
+                    instances,
+                )
+                write_index(merged_results)
+            else:
+                write_index(all_results)
             continue
         elapsed = time.perf_counter() - t0
 
@@ -610,9 +749,23 @@ def run(
         print(f"  Tokens: {total_tok:,}  Time: {elapsed:.1f}s")
 
         all_results.append(entry)
+        if rerun_failed:
+            merged_results = merge_existing_and_rerun_results(
+                previous_results,
+                all_results,
+                instances,
+            )
+            write_index(merged_results)
+        else:
+            write_index(all_results)
 
-        with open(index_path, "a") as f:
-            f.write(json.dumps(entry) + '\n')
+    if rerun_failed:
+        all_results = merge_existing_and_rerun_results(
+            previous_results,
+            all_results,
+            instances,
+        )
+    write_index(all_results)
 
     elapsed_total = time.perf_counter() - t_start
 
@@ -632,19 +785,19 @@ def run(
             "timeout_s":      timeout,
             "max_depth":      max_depth,
             "max_iterations": 30,
-            "condition":      "rlm_single_agent_failed_rerun" if rerun_failed_from else "rlm_single_agent",
+            "condition":      "rlm_single_agent_failed_rerun" if rerun_failed else "rlm_single_agent",
             "limit":          limit,
-            "rerun_failed_from": rerun_source,
+            "rerun_failed_from": str(report_path) if rerun_failed else None,
         },
         "summary": build_summary(all_results, elapsed_total),
         "groups":  build_groups(all_results),
         "results": all_results,
     }
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = out_path.with_name(out_path.name + ".tmp")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = report_path.with_name(report_path.name + ".tmp")
     tmp_path.write_text(json.dumps(report, indent=2))
-    tmp_path.replace(out_path)
+    tmp_path.replace(report_path)
 
     s = report['summary']
     print(f"\n{'='*65}")
@@ -654,7 +807,7 @@ def run(
     print(f"  Macro F1: {s['macro_f1']:.3f}")
     print(f"  All-gold: {s['all_gold_found']}/{s['total']}")
     print(f"  index.jsonl -> {index_path}")
-    print(f"  report JSON -> {out_path}")
+    print(f"  report JSON -> {report_path}")
 
 
 if __name__ == "__main__":
@@ -663,17 +816,20 @@ if __name__ == "__main__":
     p.add_argument("--model",     default=MODEL)
     p.add_argument("--repo", default=DEFAULT_REPO_PATH,
                    help="Path to the checked-out Ansible repository")
-    p.add_argument("--out", type=Path, default=None, help="Output report path")
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Output report path. Trace directory is derived as <out.stem>_logs."
+    )
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT,
                    help="Per-instance RLM timeout in seconds")
     p.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH,
                    help="RLM recursion depth. Use 2 to allow one child RLM from the REPL.")
     p.add_argument("--limit", type=int, default=None,
                    help="Limit selected instances; useful for smoke tests")
-    p.add_argument("--rerun-failed-from", default=None,
-                   help="Path to a previous RLM report JSON or index.jsonl; rerun only missing/error instances in a fresh log directory")
-    p.add_argument("--log-dir", default=None,
-                   help="Override output log directory")
+    p.add_argument("--rerun-failed", action="store_true",
+                   help="Rerun failed/missing instances from the output defined by --out.")
     args = p.parse_args()
     run(
         model=args.model,
@@ -682,7 +838,6 @@ if __name__ == "__main__":
         timeout=args.timeout,
         max_depth=args.max_depth,
         limit=args.limit,
-        rerun_failed_from=args.rerun_failed_from,
-        log_dir=args.log_dir,
+        rerun_failed=args.rerun_failed,
         out_path=args.out,
     )

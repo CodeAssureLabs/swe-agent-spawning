@@ -2,6 +2,7 @@ import ast
 import html
 import json
 import re
+import time
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
@@ -136,9 +137,67 @@ class UsageAccumulator:
 
 
 class TrackingAnthropicClient(AnthropicClient):
-    def __init__(self, *args, usage_accumulator=None, **kwargs):
+    def __init__(self, *args, usage_accumulator=None, request_retries=2, **kwargs):
         super().__init__(*args, **kwargs)
         self.usage_accumulator = usage_accumulator
+        self.request_retries = request_retries
+
+    @staticmethod
+    def _is_retryable_error(exc) -> bool:
+        text = str(exc).lower()
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {408, 504, 529}:
+            return True
+
+        err_type = str(getattr(exc, "type", "")).lower()
+        if err_type == "timeout_error":
+            return True
+
+        return (
+            "timed out" in text
+            or "timeout" in text
+            or "interrupted" in text
+            or "stream" in text and "closed" in text
+        )
+
+    @staticmethod
+    def _finalize_stream(stream_obj):
+        if hasattr(stream_obj, "__enter__"):
+            with stream_obj as active_stream:
+                return active_stream.get_final_message()
+        return stream_obj.get_final_message()
+
+    def _non_stream_request(self, kwargs):
+        return self.client.messages.create(**kwargs)
+
+    def _stream_request(self, kwargs):
+        stream_factory = getattr(self.client.messages, "stream", None)
+        if not callable(stream_factory):
+            raise TypeError("messages.stream unavailable")
+
+        response_kwargs = dict(kwargs)
+        stream_obj = None
+        try:
+            stream_obj = stream_factory(**response_kwargs)
+            response = self._finalize_stream(stream_obj)
+            if response is None:
+                raise RuntimeError("Streaming returned no final message")
+            return response
+        except TypeError as exc:
+            # If SDK expects create(..., stream=True) while lacking .stream(),
+            # fallback to create for this call path.
+            if "argument" in str(exc).lower() and "stream" in str(exc).lower():
+                response_kwargs["stream"] = True
+                response = self.client.messages.create(**response_kwargs)
+                if hasattr(response, "get_final_message"):
+                    response = response.get_final_message()
+                return response
+            raise
+        finally:
+            if stream_obj is not None and not hasattr(stream_obj, "__enter__"):
+                close = getattr(stream_obj, "close", None)
+                if callable(close):
+                    close()
 
     def completion(self, prompt, model=None):
         messages, system = self._prepare_messages(prompt)
@@ -151,7 +210,26 @@ class TrackingAnthropicClient(AnthropicClient):
         if system:
             kwargs["system"] = system
 
-        response = self.client.messages.create(**kwargs)
+        max_attempts = max(1, int(self.request_retries) + 1)
+        last_error = None
+
+        for attempt in range(max_attempts):
+            try:
+                try:
+                    response = self._stream_request(kwargs)
+                except TypeError:
+                    response = self._non_stream_request(kwargs)
+            except Exception as exc:
+                if attempt + 1 >= max_attempts or not self._is_retryable_error(exc):
+                    raise
+                last_error = exc
+                time.sleep(min(2 ** attempt, 8))
+                continue
+            break
+
+        if "response" not in locals():
+            raise RuntimeError("RLM completion failed before receiving a response.") from last_error
+
         self._track_cost(response, model)
         return "".join(
             getattr(block, "text", "")
