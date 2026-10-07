@@ -472,6 +472,8 @@ def _run_codex(args: argparse.Namespace, repo_path: Path, prompt: str) -> dict[s
         ]
         if args.codex_model:
             command.extend(["-m", args.codex_model])
+        if args.codex_reasoning_effort:
+            command.extend(["-c", f"model_reasoning_effort={args.codex_reasoning_effort}"])
         command.extend([
             "exec",
             "--cd",
@@ -705,6 +707,7 @@ def _build_report(results: list[dict[str, Any]], benchmark: dict[str, Any], args
             "instance_id": args.instance_id,
             "codex_sandbox": args.codex_sandbox,
             "codex_model": args.codex_model,
+            "codex_reasoning_effort": args.codex_reasoning_effort,
             "gemini_sandbox": args.gemini_sandbox,
             "gemini_approval_mode": args.gemini_approval_mode,
         },
@@ -931,6 +934,7 @@ if __name__ == "__main__":
     parser.add_argument("--schema", type=Path, default=Path("evals/file_prediction_schema.schema"), help="JSON schema used by CLIs that support structured output")
     parser.add_argument("--codex-bin", default="codex", help="Codex CLI binary")
     parser.add_argument("--codex-model", default="", help="Optional Codex model override, for example gpt-5.4-mini")
+    parser.add_argument("--codex-reasoning-effort", default="", help="Optional model_reasoning_effort override, e.g. high")
     parser.add_argument("--codex-sandbox", choices=["read-only", "workspace-write", "danger-full-access"], default="read-only", help="Codex sandbox mode")
     parser.add_argument("--gemini-bin", default="gemini", help="Gemini CLI binary")
     parser.add_argument("--gemini-model", default="", help="Optional Gemini model override")

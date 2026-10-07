@@ -329,6 +329,7 @@ async def run_instance(
                     if pending_subagent_call is None:
                         pending_subagent_call = {"args": {}, "result_preview": "", "result_chars": 0}
                     pending_subagent_call["result_preview"] = result[:1000]
+                    pending_subagent_call["result_full"] = result
                     pending_subagent_call["result_chars"] = len(result)
                     subagent_consults.append(pending_subagent_call)
                     pending_subagent_call = None
