@@ -67,6 +67,9 @@ class AnthropicProvider(BaseLLMProvider):
         token_details = usage.get("input_token_details", {}) or {}
         cache_read = int(token_details.get("cache_read", usage.get("cache_read_input_tokens", 0)) or 0)
         cache_creation = int(token_details.get("cache_creation", usage.get("cache_creation_input_tokens", 0)) or 0)
+        # langchain reports cache writes per TTL and leaves "cache_creation" at 0
+        cache_creation = cache_creation or int((token_details.get("ephemeral_5m_input_tokens", 0) or 0)
+                                               + (token_details.get("ephemeral_1h_input_tokens", 0) or 0))
 
         return {
             "input_tokens": input_tokens,
