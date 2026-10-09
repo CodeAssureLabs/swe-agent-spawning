@@ -260,10 +260,18 @@ PROMPT_OUTPUT = (
 )
 
 
+PROMPT_SEED = (
+    "A fast retrieval-based localizer suggested the candidate files below. They are often incomplete and "
+    "sometimes wrong. Use them as starting points, verify them, and look for other files that need edits."
+)
+
+
 def _build_prompt(instance: dict, *, subagents_enabled: bool) -> str:
     guidance = ""
     if subagents_enabled:
         guidance = f"{PROMPT_SUBAGENTS}\n\n"
+    if instance.get("seed_files"):
+        guidance += f"{PROMPT_SEED}\n" + "\n".join(f"- {f}" for f in instance["seed_files"]) + "\n\n"
     return (
         f"{PROMPT_TASK}\n\n"
         f"{guidance}"
@@ -754,6 +762,7 @@ def _build_report(results: list[dict], benchmark: dict, args: argparse.Namespace
             "reuse_initialized_session": args.reuse_initialized_session,
             "no_subagents": args.no_subagents,
             "limit": args.limit,
+            "seed_files": str(args.seed_files) if args.seed_files else None,
             "difficulty": args.difficulty,
             "session_id": args.session_id,
         },
@@ -864,6 +873,10 @@ async def main(args: argparse.Namespace) -> None:
     benchmark_path = args.benchmark.resolve()
     benchmark = json.loads(benchmark_path.read_text())
     instances = benchmark.get("instances", [])
+    if args.seed_files:
+        seeds = json.loads(args.seed_files.read_text())
+        for item in instances:
+            item["seed_files"] = seeds.get(item.get("instance_id"), [])
     selected_instances = _select_instances(instances, args)
     if not selected_instances:
         console.print("[red]No benchmark instances selected.[/red]")
@@ -1139,5 +1152,6 @@ if __name__ == "__main__":
     parser.add_argument("--skip-notes", action="store_true", help="Disable session note updates between turns")
     parser.add_argument("--difficulty", choices=["easy", "hard"], default=None, help="Only run one difficulty")
     parser.add_argument("--instance-id", action="append", default=None, help="Only run the given instance ID; can be repeated")
+    parser.add_argument("--seed-files", type=Path, default=None, help="JSON map instance_id -> candidate files from a cheap localizer, shown to the coordinator")
     parser.add_argument("--limit", type=int, default=None, help="Limit selected cases")
     asyncio.run(main(parser.parse_args()))
