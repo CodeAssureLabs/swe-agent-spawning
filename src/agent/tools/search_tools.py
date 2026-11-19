@@ -1,6 +1,7 @@
 """
 Codebase search tools.
 """
+import os
 
 import subprocess
 from pathlib import Path
@@ -23,7 +24,8 @@ def search_codebase(pattern: str, file_pattern: str = "**/*", is_regex: bool = F
         return "Error: Codebase path not set"
     
     try:
-        cmd = ["rg", "--line-number", "--color=never", "-m", "50"]
+        unbounded = os.getenv("AGENT_UNBOUNDED_TOOLS") == "1"  # ablation: return every match
+        cmd = ["rg", "--line-number", "--color=never"] + ([] if unbounded else ["-m", "50"])
         
         if file_pattern != "**/*":
             cmd.extend(["--glob", file_pattern])
@@ -41,7 +43,7 @@ def search_codebase(pattern: str, file_pattern: str = "**/*", is_regex: bool = F
         if result.returncode == 0:
             lines = result.stdout.strip().split('\n')
             output = []
-            for line in lines[:50]:
+            for line in (lines if unbounded else lines[:50]):
                 try:
                     path_part = line.split(':', 1)[0]
                     rest = line.split(':', 1)[1] if ':' in line else ""

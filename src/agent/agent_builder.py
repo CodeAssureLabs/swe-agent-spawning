@@ -273,6 +273,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from .providers.base import BaseLLMProvider
 from .subagent_registry import SubAgentRegistry
+from . import action_log
 from .token_logger import log_token_usage
 
 
@@ -585,21 +586,25 @@ Propose your partition."""
         )
 
         job_description = ""
-        async for event in scoped_agent.ask_stream(init_question):
-            if event.get("type") == "done":
-                job_description = event.get("answer", "")
+        _tok = action_log.set_agent(f"init:{agent_def['name']}")
+        try:
+            async for event in scoped_agent.ask_stream(init_question):
+                if event.get("type") == "done":
+                    job_description = event.get("answer", "")
 
-                if session_id:
-                    tokens_usage = event.get("tokens_usage", {})
-                    log_token_usage(
-                        session_id,
-                        f"subagent_{agent_def['name']}",
-                        "init_call",
-                        tokens_usage.get("total", tokens_usage),
-                    )
+                    if session_id:
+                        tokens_usage = event.get("tokens_usage", {})
+                        log_token_usage(
+                            session_id,
+                            f"subagent_{agent_def['name']}",
+                            "init_call",
+                            tokens_usage.get("total", tokens_usage),
+                        )
 
-                break
+                    break
 
+        finally:
+            action_log.reset_agent(_tok)
         # Save job_description and subagent session_id back to registry
         self.subagent_registry.update_job_description(agent_def["name"], job_description)
         self.subagent_registry.update_session_id(agent_def["name"], scoped_agent.session["session_id"])

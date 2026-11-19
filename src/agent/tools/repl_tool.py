@@ -9,6 +9,7 @@ Key features:
 - One namespace per session_id
 """
 
+from ..sandbox import guarded
 import os
 import asyncio
 import contextvars
@@ -284,7 +285,8 @@ async def python_repl(code: str) -> str:
                 with warnings.catch_warnings(record=True) as captured:
                     warnings.simplefilter("always")
                     exec(compile(async_code, "<repl>", "exec"), namespace)
-                    await asyncio.wait_for(namespace["__repl_async__"](), timeout=REPL_EXEC_TIMEOUT)
+                    with guarded():
+                        await asyncio.wait_for(namespace["__repl_async__"](), timeout=REPL_EXEC_TIMEOUT)
                     _write_captured_warnings(captured, stderr_capture)
             else:
                 # Run synchronous exec in a thread so the event loop stays responsive,
@@ -299,7 +301,8 @@ async def python_repl(code: str) -> str:
                     try:
                         with warnings.catch_warnings(record=True) as captured:
                             warnings.simplefilter("always")
-                            exec(compiled, namespace)
+                            with guarded():
+                                exec(compiled, namespace)
                             _write_captured_warnings(captured, stderr_capture)
                     except _ReplOutputLimitExceeded as exc:
                         output_limit_errors.append(str(exc))

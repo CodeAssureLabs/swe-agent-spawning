@@ -43,11 +43,13 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agent.maintainer import CodebaseAgent
+from agent.maintainer import CodebaseAgent, RECURSION_LIMIT
 from agent.memory import SessionManager
 from agent.token_logger import read_and_purge
 from agent.tools.context import set_tools
 from agent.tools.repl_tool import clear_repl_session
+from agent.sandbox import install_guard, pop_blocked, isolated_checkout, commit_exists
+from agent import action_log
 
 console = Console()
 
@@ -254,6 +256,12 @@ PROMPT_SUBAGENTS = (
     "If available folder agents clearly match the relevant subsystem, consult them when their scoped context "
     "is likely to be useful."
 )
+# Forced consultation (RQ3), the wording of the original nudged run; it replaces PROMPT_SUBAGENTS.
+PROMPT_SUBAGENTS_NUDGED = (
+    "First route the problem to any relevant available folder agents and use their specialist input as the "
+    "starting point for investigation. Use your own repository tools to verify, disambiguate, or fill gaps "
+    "after routing."
+)
 PROMPT_OUTPUT = (
     "Your final answer must be valid JSON only, with this schema:\n"
     '{"files": ["path/to/file.py"], "rationale": "short reason"}'
@@ -266,10 +274,13 @@ PROMPT_SEED = (
 )
 
 
+CONSULTATION = "adaptive"
+
+
 def _build_prompt(instance: dict, *, subagents_enabled: bool) -> str:
     guidance = ""
     if subagents_enabled:
-        guidance = f"{PROMPT_SUBAGENTS}\n\n"
+        guidance = f"{PROMPT_SUBAGENTS_NUDGED if CONSULTATION == 'nudged' else PROMPT_SUBAGENTS}\n\n"
     if instance.get("seed_files"):
         guidance += f"{PROMPT_SEED}\n" + "\n".join(f"- {f}" for f in instance["seed_files"]) + "\n\n"
     return (
@@ -306,6 +317,11 @@ async def run_instance(
     conversation_history: list[dict[str, str]] = [{"role": "user", "content": prompt}]
     trace_content_max_chars = int(os.getenv("EVAL_TRACE_CONTENT_MAX_CHARS", "120000"))
     repl_call_start: float | None = None
+    status = "ok"
+    error: str | None = None
+    step_limit_reached = False
+    tool_calls_made: list[dict[str, Any]] = []
+    pop_blocked()
 
     def trace_content(content: str) -> str:
         if trace_content_max_chars <= 0 or len(content) <= trace_content_max_chars:
@@ -322,6 +338,9 @@ async def run_instance(
         async for event in agent.ask_stream(prompt, skip_notes=skip_notes):
             event_type = event.get("type")
             if event_type == "tool_call":
+                call_args = event.get("args", {})
+                tool_calls_made.append({"name": event.get("name", ""),
+                                        "args": json.dumps(call_args, default=str)[:2000]})
                 if event.get("name") == "consult_agents":
                     subagent_consult_calls += 1
                     args = event.get("args", {})
@@ -330,7 +349,7 @@ async def run_instance(
                         "result_preview": "",
                         "result_chars": 0,
                     }
-                append_history("assistant", f"tool_call: {event.get('name', '')}")
+                append_history("assistant", f"tool_call: {event.get('name', '')} {json.dumps(call_args, default=str)[:500]}")
             elif event_type == "tool_done":
                 result = str(event.get("result", ""))
                 if event.get("name") == "consult_agents":
@@ -343,6 +362,9 @@ async def run_instance(
                     pending_subagent_call = None
                 preview = result[:500] + "..." if len(result) > 500 else result
                 append_history("tool", f"{event.get('name', '')}: {preview}")
+            elif event_type == "step_limit":
+                step_limit_reached = True
+                append_history("assistant", f"step limit of {event.get('limit')} reached; final answer requested without tools")
             elif event_type == "repl_code":
                 repl_calls += 1
                 repl_call_start = time.perf_counter()
@@ -366,15 +388,19 @@ async def run_instance(
                 append_history("assistant", answer)
     except asyncio.TimeoutError:
         answer = f"|ERROR| timed out after {case_timeout}s"
+        status = "timeout"
         append_history("assistant", answer)
     except Exception as exc:
         prefix = "|CONTEXT_OVERFLOW|" if _is_context_overflow(exc) else "|ERROR|"
         answer = f"{prefix} {exc}"
+        status = "error"
+        error = f"{type(exc).__name__}: {exc}"
         append_history("assistant", answer)
     finally:
         current_session_id = agent.session.get("session_id")
         if isinstance(current_session_id, str):
             clear_repl_session(current_session_id)
+    blocked_access = [{"kind": k, "detail": d} for k, d in pop_blocked()]
 
     elapsed = time.perf_counter() - t_start
     if repl_call_start is not None:
@@ -418,6 +444,11 @@ async def run_instance(
         "subagent_consults": subagent_consults,
         "subagent_response_chars": sum(item.get("result_chars", 0) for item in subagent_consults),
         "context_window_used": context_window_used,
+        "tool_calls": tool_calls_made,
+        "step_limit_reached": step_limit_reached,
+        "status": status,
+        "error": error,
+        "blocked_access": blocked_access,
         "session_id": agent.session.get("session_id"),
         "conversation_history": conversation_history,
     }
@@ -767,6 +798,12 @@ def _build_report(results: list[dict], benchmark: dict, args: argparse.Namespace
             "no_subagents": args.no_subagents,
             "limit": args.limit,
             "seed_files": str(args.seed_files) if args.seed_files else None,
+            "unbounded_tools": bool(getattr(args, "unbounded_tools", False)),
+            "history_repo": str(args.history_repo) if getattr(args, "history_repo", None) else None,
+            "consultation": getattr(args, "consultation", "adaptive"),
+            "registry_map_only": bool(getattr(args, "registry_map_only", False)),
+            "resumed_from": str(args.resume_from) if getattr(args, "resume_from", None) else None,
+            "recursion_limit": RECURSION_LIMIT,
             "difficulty": args.difficulty,
             "session_id": args.session_id,
         },
@@ -877,6 +914,10 @@ async def main(args: argparse.Namespace) -> None:
     benchmark_path = args.benchmark.resolve()
     benchmark = json.loads(benchmark_path.read_text())
     instances = benchmark.get("instances", [])
+    if args.unbounded_tools:
+        os.environ["AGENT_UNBOUNDED_TOOLS"] = "1"
+    global CONSULTATION
+    CONSULTATION = args.consultation
     if args.seed_files:
         seeds = json.loads(args.seed_files.read_text())
         for item in instances:
@@ -887,6 +928,20 @@ async def main(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
     repo_path = args.repo.resolve()
+    if args.history_repo:
+        # Isolated mode: the agent's checkout holds one commit; history stays in --history-repo.
+        history = args.history_repo.resolve()
+        global checkout_commit, _git_commit_exists, _git_head
+        snapshot_of: dict[str, str] = {}
+
+        def checkout_commit(path, commit):
+            isolated_checkout(path, history, commit)
+            snapshot_of[str(Path(path).resolve())] = commit
+
+        _git_head = lambda path: snapshot_of.get(str(Path(path).resolve()), "")  # noqa: E731
+        _git_commit_exists = lambda path, commit: commit_exists(history, commit)  # noqa: E731
+        first = benchmark.get("fixed_commit") or selected_instances[0][1].get("base_commit")
+        checkout_commit(repo_path, first)
     validate_repo(repo_path, benchmark.get("fixed_commit"), skip_commit_check=args.skip_commit_check)
     validate_instance_commits(repo_path, selected_instances, benchmark.get("fixed_commit"))
     if not args.allow_dirty_repo:
@@ -917,7 +972,9 @@ async def main(args: argparse.Namespace) -> None:
     )
 
     previous_cwd = Path.cwd()
-    original_head = _git_head(repo_path)
+    original_head = None if args.history_repo else _git_head(repo_path)
+    if args.history_repo:
+        install_guard(repo_path)
     initialization_snapshot: dict[str, Any] | None = None
     setup_agent: CodebaseAgent | None = None
     created_session_id: str | None = None
@@ -973,6 +1030,7 @@ async def main(args: argparse.Namespace) -> None:
             console.print("[cyan]Reusing initialized folder agents from session.[/cyan]")
         else:
             console.print("[cyan]Initializing folder agents through the agent...[/cyan]")
+            action_log.start()  # every tool call of the coordinator and the domain agents during setup
             setup_started = time.perf_counter()
             try:
                 setup_metrics = await asyncio.wait_for(
@@ -991,10 +1049,16 @@ async def main(args: argparse.Namespace) -> None:
                     f"{len(setup_agent.subagent_registry.list_agents())} partial folder agent(s).[/yellow]"
                 )
         subagent_init = {
+            "agent_actions": action_log._ACTIONS.get() or [],
             "metrics": setup_metrics,
             "agents": [] if args.no_subagents else setup_agent.subagent_registry.list_agents(),
         }
         args.subagent_initialization = subagent_init
+        if args.resume_from:
+            # Resumed run: report the registry as it was built by the original run.
+            prev_init = json.loads(args.resume_from.read_text()).get("subagent_initialization")
+            if prev_init:
+                args.subagent_initialization = prev_init
         initialization_snapshot = snapshot_agent_state(setup_agent)
         console.print(
             f"[dim]Initialized {len(subagent_init['agents'])} folder agent(s); "
@@ -1011,10 +1075,18 @@ async def main(args: argparse.Namespace) -> None:
         raise
 
     results_by_index: dict[int, dict] = {}
-    completed = 0
+    if args.resume_from:
+        # Keep the issues that the stopped run completed normally; rerun the others.
+        for r in json.loads(args.resume_from.read_text()).get("results", []):
+            ok = r.get("status") == "ok" and not r.get("error") and r.get("total_tokens")
+            if ok or r.get("status") == "timeout":
+                results_by_index[r["index"]] = r
+        console.print(f"[cyan]Resuming: kept {len(results_by_index)} completed issue(s) from {args.resume_from}[/cyan]")
+    completed = len(results_by_index)
     interrupted = False
 
     async def run_one(original_index: int, instance: dict) -> tuple[int, dict]:
+        issue_actions = action_log.start()  # task-local: this issue's tool calls of all agents
         if initialization_snapshot is not None:
             restore_agent_state(initialization_snapshot)
         checkout_commit(repo_path, instance.get("base_commit") or benchmark.get("fixed_commit"))
@@ -1026,8 +1098,10 @@ async def main(args: argparse.Namespace) -> None:
             session_id=created_session_id,
             tool_set=args.tool_set,
         )
-        if args.no_subagents:
+        if args.no_subagents or args.registry_map_only:
             disable_subagent_tools(agent)
+        if args.registry_map_only:
+            agent.subagent_registry.map_only = True
         preview = instance.get("problem_statement", "").splitlines()[0][:70]
         console.print(f"[cyan][{completed + 1}/{len(selected_instances)}][/cyan] {instance.get('difficulty', '?')} {preview}")
         try:
@@ -1039,7 +1113,7 @@ async def main(args: argparse.Namespace) -> None:
                     repo_path=repo_path,
                     case_timeout=args.timeout,
                     skip_notes=args.skip_notes,
-                    subagents_enabled=not args.no_subagents,
+                    subagents_enabled=not (args.no_subagents or args.registry_map_only),
                 ),
                 timeout=args.timeout,
             )
@@ -1051,10 +1125,12 @@ async def main(args: argparse.Namespace) -> None:
                 agent.session.get("session_id"),
                 elapsed_s=args.timeout,
             )
+            result["status"] = "timeout"
         finally:
             if initialization_snapshot is not None:
                 restore_agent_state(initialization_snapshot)
 
+        result["agent_actions"] = issue_actions
         return original_index, result
 
     tasks: list[asyncio.Task] = []
@@ -1074,6 +1150,8 @@ async def main(args: argparse.Namespace) -> None:
         for original_index, instance in selected_instances:
             if interrupted:
                 break
+            if original_index in results_by_index:
+                continue
             task = asyncio.create_task(run_one(original_index, instance))
             tasks.append(task)
             wait_for = {task}
@@ -1156,6 +1234,11 @@ if __name__ == "__main__":
     parser.add_argument("--skip-notes", action="store_true", help="Disable session note updates between turns")
     parser.add_argument("--difficulty", choices=["easy", "hard"], default=None, help="Only run one difficulty")
     parser.add_argument("--instance-id", action="append", default=None, help="Only run the given instance ID; can be repeated")
+    parser.add_argument("--unbounded-tools", action="store_true", help="Ablation: read_file returns whole files, list_files a flat list of all paths, search_codebase all matches")
     parser.add_argument("--seed-files", type=Path, default=None, help="JSON map instance_id -> candidate files from a cheap localizer, shown to the coordinator")
+    parser.add_argument("--resume-from", type=Path, default=None, help="Report of a stopped run: keep its completed issues and run the rest (use with --session-id and --reuse-initialized-session to keep the run's registry)")
+    parser.add_argument("--registry-map-only", action="store_true", help="Ablation: build the registry and show its subsystem map to the coordinator, but disable consultation")
+    parser.add_argument("--consultation", choices=["adaptive", "nudged"], default="adaptive", help="Consultation instruction for the coordinator when domain agents are enabled")
+    parser.add_argument("--history-repo", type=Path, default=None, help="Full clone used to export each base commit; --repo then becomes a single-commit snapshot under a repos_isolated/ folder, and agent code runs under the access guard")
     parser.add_argument("--limit", type=int, default=None, help="Limit selected cases")
     asyncio.run(main(parser.parse_args()))

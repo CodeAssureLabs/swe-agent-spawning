@@ -81,10 +81,20 @@ class SubAgentRegistry:
             self._data["agents"][name]["job_description"] = job_description
             self._save()
 
+    # Ablation (run_eval.py --registry-map-only): show the subsystem map without consultation.
+    map_only = False
+
     def summary_for_prompt(self) -> str:
         agents = self.list_agents()
         if not agents:
             return ""
+        if self.map_only:
+            lines = ["REPOSITORY MAP (subsystems identified when this repository was first explored):", ""]
+            for agent in agents:
+                folders = ", ".join(agent.get("folders", []))
+                desc = agent.get("job_description", "(no description)")
+                lines.append(f"- {agent['name']} | paths: {folders} | covers: {desc}")
+            return "\n".join(lines)
         lines = [
             "AVAILABLE FOLDER AGENTS:",
             "You have folder-specialist coworkers you can consult through consult_agents.",

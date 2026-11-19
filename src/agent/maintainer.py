@@ -8,13 +8,14 @@ Key features:
 - Token tracking with styled console output
 """
 
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from functools import partial
 
 from langchain.tools import BaseTool
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.errors import GraphRecursionError
 
 from .state import AgentState
 from .memory import SessionManager
@@ -27,7 +28,15 @@ from .tools import (
 )
 from .tool_registry import ToolRegistry
 from .providers import get_provider
-from .token_logger import read_and_purge, purge_stale_logs
+from .token_logger import read_and_purge, purge_stale_logs, log_token_usage
+
+# LangGraph steps per question (two steps per tool-calling turn, so about 49 tool turns).
+RECURSION_LIMIT = 100
+STEP_LIMIT_PROMPT = (
+    "You have reached the limit on tool calls for this question. Do not call any more tools. "
+    "Using only what you have already found, give your final answer now in the format the "
+    "question asks for."
+)
 
 
 class CodebaseAgent:
@@ -356,15 +365,21 @@ class CodebaseAgent:
             "skip_notes": skip_notes,
         }
         
-        config = {"configurable": {"thread_id": self.session["session_id"]}, "recursion_limit": 100}
+        config = {"configurable": {"thread_id": self.session["session_id"]}, "recursion_limit": RECURSION_LIMIT}
         full_answer = ""
         context_window_used = 0
+        self.step_limit_reached = False
+        latest: Dict[str, Any] = dict(state)
 
         # Use astream to get node-by-node updates
-        async for mode, chunk in self.graph.astream(state, config, stream_mode=["updates", "messages"]):
+        try:
+          async for mode, chunk in self.graph.astream(state, config, stream_mode=["updates", "messages"]):
             if mode == "updates":
-                # Store the latest complete state
-                node, state = next(iter(chunk.items()))
+                # Store the latest complete state (node updates carry full message lists)
+                node, update = next(iter(chunk.items()))
+                if isinstance(update, dict):
+                    latest.update(update)
+                state = latest
 
                 if node == "tools":
                     # Emit tool_call + tool_done for each call/result pair
@@ -404,7 +419,15 @@ class CodebaseAgent:
                 for content in message.content_blocks:
                     if content['type'] == "text":
                         yield {"type": "token", "content": content['text']}
-        
+        except GraphRecursionError:
+            # Step limit reached: give the agent one final turn, without tools, to answer
+            # from what it has gathered instead of discarding the run.
+            self.step_limit_reached = True
+            yield {"type": "step_limit", "limit": RECURSION_LIMIT}
+            state = latest
+            final_msg = await self._final_answer_after_step_limit(state)
+            state["messages"] = [*state["messages"], final_msg]
+
         # Aggregate final token metrics
         token_history = state.get("token_usage_history", [])
         log_data = read_and_purge(self.session["session_id"])
@@ -436,6 +459,33 @@ class CodebaseAgent:
         
         yield {"type": "done", "answer": full_answer, "citations": citations, "tokens_usage": final_token_metrics}
     
+    async def _final_answer_after_step_limit(self, state: Dict[str, Any]):
+        """One tool-free LLM call asking for the final answer after the step limit."""
+        from langchain_core.messages import AIMessage
+        from .nodes import build_static_system_prompt, build_dynamic_context
+        history = list(state.get("messages", []))
+        # Drop a trailing tool request whose results were never produced.
+        if history and isinstance(history[-1], AIMessage) and getattr(history[-1], "tool_calls", None):
+            history = history[:-1]
+        turn_start = min(state.get("current_turn_start_idx", 0), len(history))
+        messages = [SystemMessage(content=build_static_system_prompt(state)), *history[:turn_start],
+                    SystemMessage(content=build_dynamic_context(state)), *history[turn_start:],
+                    HumanMessage(content=STEP_LIMIT_PROMPT)]
+        # Keep the tool schemas (earlier turns contain tool calls) but refuse any new call.
+        tools = self.tool_registry.get_all_base_tools()
+        raw = getattr(self.llm, "llm", None)
+        if raw is not None and hasattr(raw, "bind_tools"):
+            response = await raw.bind_tools(tools, tool_choice={"type": "none"}).ainvoke(messages)
+            usage = self.llm.normalize_usage_metadata(response)
+        else:
+            self.llm.bind_tools(tools)
+            response, _, usage = await self.llm.ainvoke(messages)
+        log_token_usage(self.session["session_id"], "orchestrator", "final_after_step_limit", usage)
+        text = response.content
+        if isinstance(text, list):
+            text = "".join(p.get("text", "") for p in text if isinstance(p, dict) and p.get("type") == "text")
+        return AIMessage(content=text or "")
+
     def _extract_citations(self, text: str) -> List[str]:
         """Extract file:line citations from text."""
         import re

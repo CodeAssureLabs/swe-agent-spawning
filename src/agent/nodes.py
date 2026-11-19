@@ -124,7 +124,6 @@ Answer the user's question accurately with specific file and line citations.
 RULES:
 - Be efficient: refer to notes before re-reading files
 - Be specific: cite files and line numbers
-- You must use update_note to record any new findings for any file you have read or discovered to exist
 - Stop when you have enough information to answer
 - Do not fabricate information, do not guess, do not consider whether something is possible or likely - only use the information you have.
 - Always base your answer on facts you have found in the codebase
@@ -149,12 +148,13 @@ def _repl_namespace_summary(session_id: str) -> str:
 
     lines = []
     context_dict = ns.get("context", {})
-    if context_dict:
+    # Agent code may rebind `context` to something else; summarize it as a normal variable then.
+    if isinstance(context_dict, dict) and context_dict:
         keys_preview = ", ".join(f'"{k}"' for k in list(context_dict.keys())[:10])
         lines.append(f"  context: dict with {len(context_dict)} file(s) — [{keys_preview}]")
 
     for key, val in ns.items():
-        if key in skip or key == "context" or key.startswith("_"):
+        if key in skip or (key == "context" and isinstance(val, dict)) or key.startswith("_"):
             continue
         type_name = type(val).__name__
         if isinstance(val, (list, tuple)):
@@ -194,7 +194,7 @@ def build_dynamic_context(state: AgentState) -> str:
     else:
         subagent_summary = state.get("subagent_summary", "")
         parts = [f"""EXPLORATION NOTES (what you've already learned):
-{notes if notes else "(No notes yet - use update_note to record learnings)"}"""]
+{notes if notes else "(No notes yet)"}"""]
         if repl_summary:
             parts.append(repl_summary)
         if subagent_summary:
@@ -293,6 +293,9 @@ async def decide_update_notes(state: AgentState, llm: BaseLLMProvider, session_m
     # Pull note tools from the agent's own registry (respects scoping for subagents)
     note_tools = [t for t in tool_registry.get_all_base_tools() if t.name in ("update_note", "delete_note")]
     note_tools_by_name = {t.name: t for t in note_tools}
+    if not note_tools:
+        # The coordinator has no note tools registered; a decision call could not save anything.
+        return {}
 
     llm.bind_tools(note_tools) # only bind with note tools
     

@@ -490,16 +490,24 @@ def _run_codex(args: argparse.Namespace, repo_path: Path, prompt: str) -> dict[s
         ])
         started = time.perf_counter()
         try:
-            proc = subprocess.run(
-                command,
-                input=prompt,
-                cwd=repo_path,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=args.timeout,
-                check=False,
-            )
+            for attempt in range(6):
+                proc = subprocess.run(
+                    command,
+                    input=prompt,
+                    cwd=repo_path,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=args.timeout,
+                    check=False,
+                )
+                # The service refuses before any work when the model is at capacity or the account's
+                # rate limit is reached: wait and retry (2, 4, 8, 16, 30 minutes).
+                busy = "at capacity" in proc.stdout or "429" in proc.stdout or "Too Many Requests" in proc.stdout
+                if proc.returncode == 0 or not busy or attempt == 5:
+                    break
+                time.sleep(60 * min(2 ** (attempt + 1), 30))
+                started = time.perf_counter()
             timed_out = False
         except subprocess.TimeoutExpired as exc:
             elapsed = time.perf_counter() - started
@@ -672,7 +680,19 @@ def run_instance(args: argparse.Namespace, index: int, instance: dict[str, Any],
         "permission_failure": _permission_failure(stdout, stderr, returncode),
         "stderr_preview": stderr[:2000],
         "stdout_preview": stdout[:2000],
+        # Full event stream (every command the CLI ran), for auditing what the agent accessed.
+        "events_file": _save_events(args, instance, stdout),
     }
+
+
+def _save_events(args: argparse.Namespace, instance: dict[str, Any], stdout: str) -> str | None:
+    if not args.out:
+        return None
+    folder = args.out.resolve().with_name(args.out.stem + "_events")
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{instance.get('instance_id', 'instance')}.jsonl"
+    path.write_text(stdout)
+    return str(path)
 
 
 def _select_instances(instances: list[dict[str, Any]], args: argparse.Namespace) -> list[tuple[int, dict[str, Any]]]:
@@ -706,6 +726,7 @@ def _build_report(results: list[dict[str, Any]], benchmark: dict[str, Any], args
             "difficulty": args.difficulty,
             "instance_id": args.instance_id,
             "codex_sandbox": args.codex_sandbox,
+            "history_repo": str(args.history_repo) if args.history_repo else None,
             "codex_model": args.codex_model,
             "codex_reasoning_effort": args.codex_reasoning_effort,
             "gemini_sandbox": args.gemini_sandbox,
@@ -749,7 +770,9 @@ def load_completed_results(out_path: Path, selected_indices: set[int]) -> dict[i
     completed: dict[int, dict[str, Any]] = {}
     for result in report.get("results", []):
         index = result.get("index")
-        if isinstance(index, int) and index in selected_indices:
+        # Rerun issues the CLI could not complete (e.g. rate limits); keep the others.
+        failed = result.get("cli_returncode") not in (0, None) or not result.get("total_tokens")
+        if isinstance(index, int) and index in selected_indices and (not failed or result.get("cli_timed_out")):
             completed[index] = result
     return completed
 
@@ -818,6 +841,22 @@ def main(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
     repo_path = args.repo.resolve()
+    if args.history_repo:
+        # Isolated mode: the checkout holds one commit; history stays in --history-repo.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from agent.sandbox import isolated_checkout, commit_exists
+        history = args.history_repo.resolve()
+        global checkout_commit, _git_commit_exists, _git_head
+        snapshot_of: dict[str, str] = {}
+
+        def checkout_commit(path, commit):
+            isolated_checkout(path, history, commit)
+            snapshot_of[str(Path(path).resolve())] = commit
+
+        _git_head = lambda path: snapshot_of.get(str(Path(path).resolve()), "")  # noqa: E731
+        _git_commit_exists = lambda path, commit: commit_exists(history, commit)  # noqa: E731
+        repo_path.mkdir(parents=True, exist_ok=True)
+        checkout_commit(repo_path, benchmark.get("fixed_commit") or selected_instances[0][1].get("base_commit"))
     validate_repo(repo_path, benchmark.get("fixed_commit"), skip_commit_check=args.skip_commit_check)
     validate_instance_commits(repo_path, selected_instances, benchmark.get("fixed_commit"))
     if args.clean_untracked:
@@ -842,7 +881,7 @@ def main(args: argparse.Namespace) -> None:
         (index, instance) for index, instance in selected_instances
         if index not in results_by_index
     ]
-    original_head = _git_head(repo_path)
+    original_head = None if args.history_repo else _git_head(repo_path)
     console.print(
         f"\n[bold blue]CLI File Localization Eval[/bold blue] - {args.cli} | "
         f"{len(selected_instances)} instance(s)"
@@ -929,6 +968,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true", help="Load completed results from --out and skip those instances")
     parser.add_argument("--difficulty", choices=["easy", "hard"], default=None, help="Only run one difficulty")
     parser.add_argument("--instance-id", action="append", default=None, help="Only run the given instance ID; can be repeated")
+    parser.add_argument("--history-repo", type=Path, default=None, help="Full clone used to export each base commit; --repo then becomes a single-commit snapshot under a repos_isolated/ folder")
     parser.add_argument("--limit", type=int, default=None, help="Limit selected cases")
     parser.add_argument("--trace-content-max-chars", type=int, default=120000, help="Max prompt/answer chars retained in conversation_history")
     parser.add_argument("--schema", type=Path, default=Path("evals/file_prediction_schema.schema"), help="JSON schema used by CLIs that support structured output")

@@ -7,6 +7,7 @@ and returns a LangChain BaseTool that rejects paths outside scope.
 """
 
 import subprocess
+import os
 from pathlib import Path
 from typing import List
 
@@ -15,7 +16,9 @@ from ._tool_decorator import conditional_tool
 
 def _is_within_scope(file_path: str, allowed_folders: List[str]) -> bool:
     """Check if a relative file_path falls within any of the allowed folders."""
-    normalized = str(Path(file_path))
+    normalized = os.path.normpath(file_path)
+    if os.path.isabs(normalized) or normalized == ".." or normalized.startswith("../"):
+        return False
     for folder in allowed_folders:
         normalized_folder = str(Path(folder))
         if normalized == normalized_folder or normalized.startswith(normalized_folder + "/"):

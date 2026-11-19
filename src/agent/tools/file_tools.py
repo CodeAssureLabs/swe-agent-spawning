@@ -12,6 +12,11 @@ _READ_FILE_MAX_LINES = int(os.getenv("READ_FILE_MAX_LINES", "300"))
 _READ_FILE_MAX_CHARS = int(os.getenv("READ_FILE_MAX_CHARS", "80000"))  # ~20k tokens
 _PREVIEW_LINES = 50
 
+
+def _unbounded() -> bool:
+    """Ablation switch (run_eval.py --unbounded-tools): whole files, flat listings, all search matches."""
+    return os.getenv("AGENT_UNBOUNDED_TOOLS") == "1"
+
 _CODE_EXTENSIONS = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".go", ".rs", ".c", ".cpp",
     ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".cs", ".scala", ".sh",
@@ -42,6 +47,10 @@ def read_file(file_path: str, offset: int = 0, limit: int = 0) -> str:
         return "Error: Codebase path not set"
 
     full_path = codebase / file_path
+    try:
+        full_path.resolve().relative_to(codebase.resolve())
+    except ValueError:
+        return f"Error: Path escapes codebase directory: {file_path}"
 
     if not full_path.exists():
         return f"Error: File not found: {file_path}"
@@ -64,7 +73,7 @@ def read_file(file_path: str, offset: int = 0, limit: int = 0) -> str:
 
         # Full read — check thresholds (line count OR character count)
         is_large = line_count > _READ_FILE_MAX_LINES or len(content) > _READ_FILE_MAX_CHARS
-        if not is_large:
+        if not is_large or _unbounded():
             numbered = [f"{i+1:4d} | {line}" for i, line in enumerate(lines)]
             return '\n'.join(numbered)
 
@@ -132,6 +141,17 @@ def list_files(directory: str = ".", recursive: bool = False, depth: int = 1) ->
         return f"Error: Path escapes codebase directory: {directory}"
 
     gitignore_patterns = _load_gitignore(codebase)
+    if _unbounded():
+        # One full repository-relative path per line for every file below the directory.
+        paths = []
+        stack = [dir_path]
+        while stack:
+            for item in _visible_children(stack.pop(), codebase, gitignore_patterns):
+                if item.is_dir():
+                    stack.append(item)
+                else:
+                    paths.append(str(item.relative_to(codebase)))
+        return "\n".join(sorted(paths)) if paths else f"(empty directory: {directory})"
     max_depth = max(1, min(depth, 8))
 
     if not recursive:

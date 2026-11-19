@@ -12,6 +12,7 @@ from typing import Dict, Optional, Type
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from . import action_log
 from .token_logger import log_token_usage
 
 
@@ -47,6 +48,7 @@ class SubAgentHandle(BaseTool):
         raise NotImplementedError("Use _arun for async execution")
 
     async def _arun(self, question: str) -> str:
+        token = action_log.set_agent(f"domain:{self.agent_def['name']}")
         try:
             answer = ""
             async for event in self.scoped_agent.ask_stream(question):
@@ -68,3 +70,5 @@ class SubAgentHandle(BaseTool):
             return answer if answer else "(subagent returned no answer)"
         except Exception as e:
             return f"Error from subagent {self.agent_def['name']}: {e}"
+        finally:
+            action_log.reset_agent(token)

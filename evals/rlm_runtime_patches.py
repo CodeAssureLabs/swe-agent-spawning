@@ -1,8 +1,11 @@
 import ast
 import html
 import json
+import os
 import re
+import sys
 import time
+from pathlib import Path
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
@@ -12,6 +15,20 @@ import rlm.core.rlm as rlm_core
 import rlm.utils.parsing as rlm_parsing
 from rlm.clients.anthropic import AnthropicClient
 from rlm.logger import RLMLogger
+from rlm.environments.local_repl import LocalREPL
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from agent.sandbox import guarded  # noqa: E402
+
+# One REPL action per root turn: the completion stops at the end of the first action, so the
+# model sees each action's output before it writes the next one or its answer.
+ONE_ACTION_PER_TURN = os.getenv("RLM_ONE_ACTION_PER_TURN") == "1"
+ACTION_STOP = "</invoke>"
+PROMPT_CACHE = os.getenv("RLM_PROMPT_CACHE") == "1"
+FIRST_TURN_NOTICE = (
+    "\n[runner] An answer submitted in the first turn is not accepted, because no REPL output "
+    "had been seen yet. Inspect the output above, then submit."
+)
 
 
 ORIGINAL_FIND_CODE_BLOCKS = rlm_core.find_code_blocks
@@ -79,6 +96,22 @@ def find_code_blocks_with_xml_tools(response: str) -> list[str]:
     return code_blocks
 
 
+def first_action_only(text: str) -> str:
+    """Cut a reply after its first complete REPL action.
+
+    The stop sequence does not always end the reply (the model sometimes writes actions in a
+    function-call form that the API does not match against stop sequences), so the runner
+    enforces one action per turn itself: later actions and any FINAL(...) after the first
+    action are dropped before execution and are not kept in the conversation.
+    """
+    ends = [m.end() for m in (XML_TOOL_CALL_RE.search(text), FENCED_REPL_RE.search(text)) if m]
+    if not ends:
+        return text
+    end = min(ends)
+    closing = "\n</invoke>" if text[:end].rstrip().endswith("</parameter>") else ""
+    return text[:end] + closing
+
+
 def default_answer_with_user_prompt(self, message_history, lm_handler):
     current_prompt = message_history + [
         {
@@ -106,6 +139,41 @@ def default_answer_with_user_prompt(self, message_history, lm_handler):
     return response
 
 
+ORIGINAL_COMPLETION_TURN = rlm_core.RLM._completion_turn
+ORIGINAL_COMPLETION = rlm_core.RLM.completion
+ORIGINAL_EXECUTE_CODE = LocalREPL.execute_code
+
+
+def completion_turn_observed_first(self, *args, **kwargs):
+    """Refuse a final answer in the first root turn, before any REPL output was shown."""
+    iteration = ORIGINAL_COMPLETION_TURN(self, *args, **kwargs)
+    turn = getattr(self, "_root_turns_done", 0)
+    self._root_turns_done = turn + 1
+    if ONE_ACTION_PER_TURN and turn == 0:
+        for block in iteration.code_blocks:
+            result = block.result
+            if getattr(result, "final_answer", None) is not None:
+                result.final_answer = None
+                result.stdout = (result.stdout or "") + FIRST_TURN_NOTICE
+                self._first_turn_answers_refused = getattr(self, "_first_turn_answers_refused", 0) + 1
+    return iteration
+
+
+def completion_with_turn_count(self, *args, **kwargs):
+    self._root_turns_done = 0
+    self._first_turn_answers_refused = 0
+    return ORIGINAL_COMPLETION(self, *args, **kwargs)
+
+
+def execute_code_guarded(self, code):
+    with guarded():
+        return ORIGINAL_EXECUTE_CODE(self, code)
+
+
+rlm_core.RLM._completion_turn = completion_turn_observed_first
+rlm_core.RLM.completion = completion_with_turn_count
+LocalREPL.execute_code = execute_code_guarded
+
 rlm_parsing.find_code_blocks = find_code_blocks_with_xml_tools
 rlm_core.find_code_blocks = find_code_blocks_with_xml_tools
 rlm_core.RLM._default_answer = default_answer_with_user_prompt
@@ -116,8 +184,12 @@ class UsageAccumulator:
         self.calls = defaultdict(int)
         self.input_tokens = defaultdict(int)
         self.output_tokens = defaultdict(int)
+        self.cache_read = 0
+        self.cache_write = 0
 
-    def add(self, model, input_tokens, output_tokens):
+    def add(self, model, input_tokens, output_tokens, cache_read=0, cache_write=0):
+        self.cache_read += cache_read
+        self.cache_write += cache_write
         self.calls[model] += 1
         self.input_tokens[model] += input_tokens
         self.output_tokens[model] += output_tokens
@@ -207,6 +279,11 @@ class TrackingAnthropicClient(AnthropicClient):
             raise ValueError("Model name is required for Anthropic client.")
 
         kwargs = {"model": model, "max_tokens": self.max_tokens, "messages": messages}
+        if PROMPT_CACHE:
+            # Automatic prompt caching of the growing conversation: changes cost, not the model's input.
+            kwargs["cache_control"] = {"type": "ephemeral"}
+        if ONE_ACTION_PER_TURN:
+            kwargs["stop_sequences"] = [ACTION_STOP]
         if system:
             kwargs["system"] = system
 
@@ -231,20 +308,28 @@ class TrackingAnthropicClient(AnthropicClient):
             raise RuntimeError("RLM completion failed before receiving a response.") from last_error
 
         self._track_cost(response, model)
-        return "".join(
+        text = "".join(
             getattr(block, "text", "")
             for block in (response.content or [])
             if getattr(block, "type", None) == "text"
         )
+        return first_action_only(text) if ONE_ACTION_PER_TURN else text
 
     def _track_cost(self, response, model):
-        super()._track_cost(response, model)
+        # With prompt caching the API reports cached input separately; count it as input so that
+        # token totals stay comparable with uncached runs, and keep the cache split for cost.
+        u = response.usage
+        cr = getattr(u, "cache_read_input_tokens", 0) or 0
+        cw = getattr(u, "cache_creation_input_tokens", 0) or 0
+        total_in = u.input_tokens + cr + cw
+        self.model_call_counts[model] += 1
+        self.model_input_tokens[model] += total_in
+        self.model_output_tokens[model] += u.output_tokens
+        self.model_total_tokens[model] += total_in + u.output_tokens
+        self.last_prompt_tokens = total_in
+        self.last_completion_tokens = u.output_tokens
         if self.usage_accumulator is not None:
-            self.usage_accumulator.add(
-                model,
-                response.usage.input_tokens,
-                response.usage.output_tokens,
-            )
+            self.usage_accumulator.add(model, total_in, u.output_tokens, cr, cw)
 
 
 def drop_repl_locals(payload):

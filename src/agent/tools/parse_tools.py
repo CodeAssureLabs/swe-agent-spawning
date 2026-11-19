@@ -75,6 +75,10 @@ def parse_file(file_path: str) -> str:
         return "Error: Codebase path not set"
 
     full_path = codebase / file_path
+    try:
+        full_path.resolve().relative_to(Path(codebase).resolve())
+    except ValueError:
+        return f"Error: Path escapes codebase directory: {file_path}"
     if not full_path.exists():
         return f"Error: File not found: {file_path}"
 

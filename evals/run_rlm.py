@@ -18,6 +18,7 @@ from rlm.utils.prompts import RLM_SYSTEM_PROMPT
 try:
     from evals.rlm_runtime_patches import (
         CompactRLMLogger,
+        ONE_ACTION_PER_TURN,
         UsageAccumulator,
         capture_rlm_usage,
         drop_repl_locals,
@@ -25,10 +26,14 @@ try:
 except ModuleNotFoundError:
     from rlm_runtime_patches import (
         CompactRLMLogger,
+        ONE_ACTION_PER_TURN,
         UsageAccumulator,
         capture_rlm_usage,
         drop_repl_locals,
     )
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from agent.sandbox import install_guard, isolated_checkout, pop_blocked  # noqa: E402
 from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv(), override=True)
 
@@ -63,9 +68,15 @@ def build_system_prompt(repo_path):
         "</invoke>\n"
         "This runner accepts the XML form above; follow it even if earlier generic instructions mention ```repl blocks.\n"
         "Do not nest <invoke> tags, do not use <invoke name=\"call\">, and do not include </repl>.\n"
-        "Prefer one XML REPL action per assistant message when you need to inspect REPL output before deciding "
-        "the next step. If you already have enough evidence, you may include FINAL(...) in the same assistant "
-        "message after XML REPL actions; the runner executes REPL code blocks in order before honoring FINAL(...).\n"
+        + (
+            "Write exactly one XML REPL action per assistant message. The runner ends your message after "
+            "that action, runs it, and shows you its output before your next message. Give FINAL(...) only "
+            "after you have seen the output you need.\n"
+            if ONE_ACTION_PER_TURN else
+            "Prefer one XML REPL action per assistant message when you need to inspect REPL output before deciding "
+            "the next step. If you already have enough evidence, you may include FINAL(...) in the same assistant "
+            "message after XML REPL actions; the runner executes REPL code blocks in order before honoring FINAL(...).\n"
+        ) +
         "IMPORTANT: Your very first REPL action must run this exact setup code inside the XML code parameter:\n"
         "import os, subprocess\n"
         f"repo_path = {repo_path!r}\n"
@@ -421,6 +432,7 @@ def make_result_entry(
     trace_path,
     status,
     error=None,
+    first_turn_answers_refused=0,
 ):
     pred_set = set(predicted)
     gold_set = set(inst['gold_files'])
@@ -516,6 +528,8 @@ def make_result_entry(
         "final_answer_repl_calls": final_answer_repl_calls,
         "exploration_repl_calls": max(0, trajectory_repl_calls - final_answer_repl_calls),
         "turn_count":        len((trajectory or {}).get("iterations", []) or []),
+        "first_turn_answers_refused": first_turn_answers_refused,
+        "blocked_access":    [{"kind": k, "detail": d} for k, d in pop_blocked()],
         "conversation_history_message_count": len(conversation_history),
         "conversation_history": conversation_history,
         "rlm_trajectory":     trajectory,
@@ -538,15 +552,20 @@ def run(
     limit=None,
     rerun_failed=False,
     out_path=None,
+    history_repo=None,
 ):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError("Set ANTHROPIC_API_KEY in .env")
+    if history_repo and not os.path.exists(repo_path):
+        os.makedirs(repo_path)
     if not os.path.exists(repo_path):
         raise ValueError(f"Repo not found at {repo_path}")
 
     benchmark_path = Path(benchmark_path).resolve()
     repo_path = str(Path(repo_path).resolve())
+    if history_repo:
+        install_guard(repo_path)
     with benchmark_path.open() as f:
         bench = json.load(f)
 
@@ -632,12 +651,16 @@ def run(
         print(f"  Gold: {inst['gold_files']}")
 
         # Checkout the repo to the correct commit for this instance
-        checkout = subprocess.run(
-            ['git', '-C', repo_path, 'checkout', base_commit],
-            capture_output=True, text=True
-        )
-        if checkout.returncode != 0:
-            print(f"  WARN: git checkout failed: {checkout.stderr.strip()}")
+        if history_repo:
+            isolated_checkout(Path(repo_path), Path(history_repo), base_commit)
+            pop_blocked()
+        else:
+            checkout = subprocess.run(
+                ['git', '-C', repo_path, 'checkout', base_commit],
+                capture_output=True, text=True
+            )
+            if checkout.returncode != 0:
+                print(f"  WARN: git checkout failed: {checkout.stderr.strip()}")
 
         trace_file = f"sample_{idx:03d}_{inst['difficulty']}"
         logger = CompactRLMLogger(log_dir=str(log_dir),
@@ -687,6 +710,7 @@ def run(
             total_in, total_out, llm_calls = usage_totals(usage_by_model)
             response = f"|ERROR| {e}"
             entry = make_result_entry(
+            first_turn_answers_refused=getattr(rlm, "_first_turn_answers_refused", 0),
                 idx=idx,
                 inst=inst,
                 model=model,
@@ -706,6 +730,8 @@ def run(
                 status="error",
                 error=str(e),
             )
+            entry["cache_read_input_tokens"] = usage_accumulator.cache_read
+            entry["cache_creation_input_tokens"] = usage_accumulator.cache_write
             all_results.append(entry)
             if rerun_failed:
                 merged_results = merge_existing_and_rerun_results(
@@ -721,6 +747,7 @@ def run(
 
         predicted       = extract_files(response)
         entry = make_result_entry(
+            first_turn_answers_refused=getattr(rlm, "_first_turn_answers_refused", 0),
             idx=idx,
             inst=inst,
             model=model,
@@ -748,6 +775,8 @@ def run(
         print(f"  Missing: {file_score['missing_files']}")
         print(f"  Tokens: {total_tok:,}  Time: {elapsed:.1f}s")
 
+        entry["cache_read_input_tokens"] = usage_accumulator.cache_read
+        entry["cache_creation_input_tokens"] = usage_accumulator.cache_write
         all_results.append(entry)
         if rerun_failed:
             merged_results = merge_existing_and_rerun_results(
@@ -785,6 +814,9 @@ def run(
             "timeout_s":      timeout,
             "max_depth":      max_depth,
             "max_iterations": 30,
+            "one_action_per_turn": ONE_ACTION_PER_TURN,
+            "prompt_cache": os.getenv("RLM_PROMPT_CACHE") == "1",
+            "history_repo":   history_repo,
             "condition":      "rlm_single_agent_failed_rerun" if rerun_failed else "rlm_single_agent",
             "limit":          limit,
             "rerun_failed_from": str(report_path) if rerun_failed else None,
@@ -828,6 +860,9 @@ if __name__ == "__main__":
                    help="RLM recursion depth. Use 2 to allow one child RLM from the REPL.")
     p.add_argument("--limit", type=int, default=None,
                    help="Limit selected instances; useful for smoke tests")
+    p.add_argument("--history-repo", default=None,
+                   help="Full clone used to export each base commit; --repo then becomes a single-commit "
+                        "snapshot under a repos_isolated/ folder, and REPL code runs under the access guard")
     p.add_argument("--rerun-failed", action="store_true",
                    help="Rerun failed/missing instances from the output defined by --out.")
     args = p.parse_args()
@@ -840,4 +875,5 @@ if __name__ == "__main__":
         limit=args.limit,
         rerun_failed=args.rerun_failed,
         out_path=args.out,
+        history_repo=args.history_repo,
     )
